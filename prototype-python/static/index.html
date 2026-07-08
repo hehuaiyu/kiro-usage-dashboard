@@ -1,0 +1,338 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kiro Usage Dashboard</title>
+  <link rel="stylesheet" href="/style.css" />
+  <!-- ECharts CDN，主备两条：主 jsdelivr，备 unpkg。加载失败会在 app.js 里检测并给出提示 -->
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js"></script>
+  <script>
+    // 备用 CDN：主 CDN 失败时兜底
+    if (typeof echarts === 'undefined') {
+      document.write('<script src="https://unpkg.com/echarts@5.5.1/dist/echarts.min.js"><\/script>');
+    }
+  </script>
+</head>
+<body>
+
+<!-- ============ 顶部工具栏 ============ -->
+<header class="topbar">
+  <div class="brand">
+    <span class="brand-logo">◆</span>
+    <span class="brand-title">Kiro Usage</span>
+    <span class="brand-sub">Dashboard</span>
+  </div>
+
+  <div class="topbar-controls">
+    <!-- 时间粒度 -->
+    <div class="seg" role="tablist" aria-label="时间粒度">
+      <button class="seg-btn" data-gran="hour">时</button>
+      <button class="seg-btn active" data-gran="day">日</button>
+      <button class="seg-btn" data-gran="week">周</button>
+      <button class="seg-btn" data-gran="month">月</button>
+    </div>
+
+    <!-- 时间范围 -->
+    <div class="seg" role="tablist" aria-label="时间范围">
+      <button class="seg-btn" data-range="today">今日</button>
+      <button class="seg-btn" data-range="week">本周</button>
+      <button class="seg-btn" data-range="month">本月</button>
+      <button class="seg-btn active" data-range="30d">30 天</button>
+      <button class="seg-btn" data-range="all">全部</button>
+    </div>
+
+    <!-- 实时状态 -->
+    <div class="live-indicator" id="live-indicator" title="服务在实时刷新数据">
+      <span class="live-dot"></span>
+      <span class="live-text" id="live-text">刚刚</span>
+    </div>
+
+    <button class="icon-btn" id="btn-refresh" title="立即刷新">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+        <polyline points="23 4 23 10 17 10"></polyline>
+        <path d="M20.49 15A9 9 0 1 1 5.64 5.64L1 10"></path>
+      </svg>
+    </button>
+
+    <button class="icon-btn" id="btn-theme" title="切换主题">
+      <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2">
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"></path>
+      </svg>
+    </button>
+  </div>
+</header>
+
+<!-- 全局筛选提示条：点击图表联动时显示 -->
+<div class="filter-bar hidden" id="filter-bar">
+  <span class="filter-label">已筛选：</span>
+  <span class="filter-value" id="filter-value"></span>
+  <button class="filter-clear" id="filter-clear">清除</button>
+</div>
+
+<!-- ============ 指标说明（可折叠）============ -->
+<details class="glossary">
+  <summary>
+    <span>指标说明</span>
+    <span class="glossary-hint">estimated vs billed / v1 vs v2 / turn / session</span>
+  </summary>
+  <div class="glossary-body">
+    <div class="glossary-item">
+      <b>估算累计 (Est.)</b>
+      <span>本地会话文件里 <code>usage_summary</code> 事件的累加，即 Kiro 每次响应结束报的 <code>Est. Credits Used</code> 之和。反映提交给 Kiro 的工作量原始估价（未折算）。</span>
+    </div>
+    <div class="glossary-item">
+      <b>跨账号计费峰值和</b>
+      <span>本地日志里 quota 接口返回的 <code>currentUsage</code>，按账号分组取历史峰值再求和。反映服务端已折算的实际扣费（跨所有账号）。</span>
+    </div>
+    <div class="glossary-item">
+      <b>Turn 与 Session</b>
+      <span>一次"提问 → 响应完成"为一个 turn；一个会话（左侧栏页签）由若干 turn 组成。v1 是旧格式历史会话（无 credits），v2 是新格式（每 turn 含 credits）。</span>
+    </div>
+    <div class="glossary-item">
+      <b>账号归零/重置</b>
+      <span>quota 折线图上 <code>currentUsage</code> 断崖式下跌——服务端切换了账号或月度重置。</span>
+    </div>
+  </div>
+</details>
+
+<!-- ============ KPI 指标条 ============ -->
+<section class="kpi-row">
+  <div class="kpi-card" title="所有 turn 的 Est. Credits Used 累加。未折算的原始估价。">
+    <div class="kpi-label">估算累计 (Est.)</div>
+    <div class="kpi-value" id="kpi-est">-</div>
+    <div class="kpi-hint">Est. Credits Used 之和</div>
+  </div>
+  <div class="kpi-card" title="每个账号历史 currentUsage 峰值之和。服务端已折算的实际扣费。">
+    <div class="kpi-label">跨账号计费峰值和</div>
+    <div class="kpi-value" id="kpi-cross-peak">-</div>
+    <div class="kpi-hint" id="kpi-cross-peak-hint">已折算实际扣费</div>
+  </div>
+  <div class="kpi-card" title="一次完整&quot;提问 → 响应完成&quot; = 一个 turn。">
+    <div class="kpi-label">Turn 数</div>
+    <div class="kpi-value" id="kpi-turns">-</div>
+    <div class="kpi-hint" id="kpi-turns-hint">含计费 turn 数</div>
+  </div>
+  <div class="kpi-card" title="所有 turn 的 Elapsed time 累加。">
+    <div class="kpi-label">累计耗时</div>
+    <div class="kpi-value" id="kpi-elapsed">-</div>
+    <div class="kpi-hint" id="kpi-elapsed-hint">平均每 turn</div>
+  </div>
+  <div class="kpi-card" title="v1 (旧格式) + v2 (新格式) 的 session 总数。">
+    <div class="kpi-label">所有 Session (v1+v2)</div>
+    <div class="kpi-value" id="kpi-all-sessions">-</div>
+    <div class="kpi-hint" id="kpi-all-sessions-hint">跨所有账号与项目</div>
+  </div>
+</section>
+
+<!-- ============ 主趋势图 ============ -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="panel-title">
+      趋势
+      <span class="panel-sub" id="trend-sub">按天 · 近 30 天</span>
+    </div>
+    <div class="panel-actions">
+      <label class="chk">
+        <input type="checkbox" id="trend-show-turns" checked />
+        <span>叠加 turn 数</span>
+      </label>
+      <label class="chk">
+        <input type="checkbox" id="trend-show-elapsed" />
+        <span>叠加耗时</span>
+      </label>
+    </div>
+  </div>
+  <div class="chart-box chart-tall" id="chart-trend"></div>
+</section>
+
+<!-- ============ 热力图 + Treemap ============ -->
+<section class="grid-2">
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">
+        小时热力图
+        <span class="panel-sub">周一到周日 × 24 小时 · 单位: credits</span>
+      </div>
+    </div>
+    <div class="chart-box chart-mid" id="chart-heatmap"></div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">
+        工具调用分布
+        <span class="panel-sub">按 turn 数与 credits 双维展示</span>
+      </div>
+      <div class="panel-actions">
+        <div class="seg mini" role="tablist" aria-label="工具排序维度">
+          <button class="seg-btn active" data-tool-metric="credits">按 credits</button>
+          <button class="seg-btn" data-tool-metric="count">按 turn 数</button>
+        </div>
+      </div>
+    </div>
+    <div class="chart-box chart-mid" id="chart-tools"></div>
+  </div>
+</section>
+
+<!-- ============ Top Sessions + Workspace ============ -->
+<section class="grid-2">
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">
+        Top Sessions
+        <span class="panel-sub">按 credits 降序，点击行过滤明细</span>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table class="data-table" id="top-sessions-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Session</th>
+            <th class="num">turns</th>
+            <th class="num">credits</th>
+            <th class="num">耗时</th>
+            <th>最近</th>
+          </tr>
+        </thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">
+        Workspace 分组
+        <span class="panel-sub">v1+v2 合并的 session 数占比</span>
+      </div>
+    </div>
+    <div class="chart-box chart-mid" id="chart-workspace"></div>
+  </div>
+</section>
+
+<!-- ============ 明细表 ============ -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="panel-title">
+      Turn 明细
+      <span class="panel-sub" id="detail-sub">- 条</span>
+    </div>
+    <div class="panel-actions detail-controls">
+      <input type="search" class="search-input" id="detail-search"
+             placeholder="搜索 title / workspace / model ..." />
+      <select class="select" id="detail-status">
+        <option value="">全部状态</option>
+        <option value="success">success</option>
+        <option value="aborted">aborted</option>
+        <option value="failed">failed</option>
+      </select>
+      <select class="select" id="detail-workspace">
+        <option value="">全部 workspace</option>
+      </select>
+      <button class="btn" id="btn-export-csv">导出 CSV</button>
+    </div>
+  </div>
+  <div class="table-wrap detail-table-wrap">
+    <table class="data-table detail-table" id="detail-table">
+      <thead>
+        <tr>
+          <th data-sort="t">时间</th>
+          <th data-sort="ws">workspace</th>
+          <th class="num" data-sort="c">credits</th>
+          <th class="num" data-sort="e">耗时</th>
+          <th data-sort="s">status</th>
+          <th class="num" data-sort="tools">tools</th>
+          <th data-sort="model">model</th>
+          <th data-sort="title">title</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="pager" id="detail-pager"></div>
+</section>
+
+<!-- ============ 账号切换历史 ============ -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="panel-title">
+      账号切换历史
+      <span class="panel-sub" id="accounts-sub">- 个账号</span>
+    </div>
+    <div class="panel-actions">
+      <span class="panel-hint" style="color:var(--fg-mute);font-size:12px">
+        每次归零 = 服务端切账号 / quota 重置
+      </span>
+    </div>
+  </div>
+  <div class="chart-box chart-tall" id="chart-accounts"></div>
+  <div class="table-wrap" style="margin-top:12px">
+    <table class="data-table" id="accounts-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>userId</th>
+          <th>时段</th>
+          <th class="num">峰值</th>
+          <th class="num">现在</th>
+          <th class="num">上限</th>
+          <th class="num">归零次数</th>
+          <th class="num">快照数</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+</section>
+
+<!-- ============ v1 Sessions (旧格式历史) ============ -->
+<section class="panel">
+  <div class="panel-header">
+    <div class="panel-title">
+      v1 Sessions (旧格式历史)
+      <span class="panel-sub" id="v1-sub">- 条</span>
+    </div>
+    <div class="panel-actions detail-controls">
+      <input type="search" class="search-input" id="v1-search"
+             placeholder="搜索 title / workspace ..." />
+      <select class="select" id="v1-workspace-filter">
+        <option value="">全部 workspace</option>
+      </select>
+    </div>
+  </div>
+  <div class="table-wrap detail-table-wrap">
+    <table class="data-table detail-table" id="v1-table">
+      <thead>
+        <tr>
+          <th data-sort="t">时间</th>
+          <th data-sort="workspace">workspace</th>
+          <th class="num" data-sort="turn_count">turn 数</th>
+          <th data-sort="model">model</th>
+          <th data-sort="title">title</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="pager" id="v1-pager"></div>
+</section>
+
+<!-- ============ 页脚 ============ -->
+<footer class="footer">
+  <span id="footer-scan">-</span>
+  <span class="dot">·</span>
+  <span id="footer-server">-</span>
+  <span class="dot">·</span>
+  <span>数据源: <code>~/.kiro/sessions/</code> + <code>state.vscdb</code></span>
+</footer>
+
+<!-- 加载失败提示（ECharts 加载失败时显示） -->
+<div class="toast toast-error hidden" id="load-error">
+  ECharts CDN 加载失败，请检查网络或用 <code>--offline</code> 模式（暂未实现）
+</div>
+
+<script src="/app.js"></script>
+</body>
+</html>

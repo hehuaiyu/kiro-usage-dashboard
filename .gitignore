@@ -1,0 +1,76 @@
+# ---------------- Python ----------------
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.pyc
+
+# ---------------- Rust (future src-tauri) ----------------
+target/
+**/*.rs.bk
+*.pdb
+
+# ---------------- Node.js (Tauri 前端可选) ----------------
+node_modules/
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+.pnpm-store/
+
+# ---------------- Tauri ----------------
+src-tauri/target/
+src-tauri/gen/
+src-tauri/WixTools/
+
+# ---------------- IDE / 编辑器 ----------------
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.DS_Store
+
+# ---------------- 操作系统 ----------------
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# ---------------- 编译 / 打包产物 ----------------
+dist/
+build/
+bundle/
+out/
+*.exe
+*.msi
+*.dmg
+*.deb
+*.AppImage
+
+# ---------------- 日志与临时文件 ----------------
+*.log
+logs/
+tmp/
+temp/
+.tmp/
+
+# ---------------- 环境变量与密钥 ----------------
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.p12
+
+# ---------------- 项目特有 ----------------
+# 用户运行时导出的 CSV（含实际用量数据，避免误提交）
+kiro_usage_*.csv
+usage_export_*.csv
