@@ -1,0 +1,54 @@
+[package]
+name = "kiro-usage-dashboard"
+version = "0.1.0"
+edition = "2021"
+description = "Local dashboard for Kiro IDE usage statistics"
+authors = ["hehuaiyu <1192689749@qq.com>"]
+license = "MIT"
+repository = "https://github.com/hehuaiyu/kiro-usage-dashboard"
+
+# 只做桌面 (bin)，不做 mobile lib
+[[bin]]
+name = "kiro-usage-dashboard"
+path = "src/main.rs"
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+# Tauri v2 桌面运行时
+tauri = { version = "2", features = [] }
+
+# 序列化 / JSON
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# 时间 (含时区处理，序列化为 UTC ms)
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+
+# 正则 (log 解析)
+regex = "1"
+once_cell = "1"
+
+# SQLite (读 Kiro state.vscdb)。bundled = 静态编入 SQLite，用户不用装
+rusqlite = { version = "0.32", features = ["bundled"] }
+
+# 递归遍历 (扫 messages.jsonl / logs)
+walkdir = "2"
+
+# Kiro workspace 目录名解码
+base64 = "0.22"
+
+# 跨平台定位 %APPDATA% / ~
+dirs = "5"
+
+# 更快的锁
+parking_lot = "0.12"
+
+# Release 体积/性能优化
+[profile.release]
+opt-level = "z"       # 优化体积
+lto = true            # 链接期优化
+codegen-units = 1
+strip = true          # 去符号
+panic = "abort"       # panic 不展开栈

@@ -17,11 +17,21 @@
 - **零第三方依赖**：Python 版仅用 stdlib，只需 Python 3.9+
 - **数据本地**：默认只监听 `127.0.0.1`，不做任何外部通信（除 ECharts CDN 拉图表库）
 
-## 快速开始（Python 原型版）
+## 快速开始
 
-需要 Python 3.9+（Windows 用户如果装了 miniconda / anaconda 也可以，工具会自动找 Python 位置）。
+项目提供 **两个可选版本**：
 
-**方式 A：双击启动**
+| | Python 原型 | Rust exe (Tauri) |
+|---|---|---|
+| 入口 | `prototype-python/kiro_dashboard.cmd` | `src-tauri/target/release/kiro-usage-dashboard.exe` |
+| 依赖 | Python 3.9+（脚本会自动探测 miniconda / anaconda / py launcher / PATH） | 无依赖（Win10 1809+ 自带 WebView2） |
+| 分发大小 | 全套代码 ~1.2 MB | 单文件 exe ~12 MB |
+| 启动速度 | 冷启 1-2 s（Python interp 启动） | 冷启 < 500 ms |
+| 用法场景 | 想直接看代码 / 想改逻辑 / 别人机器上跑（有 Python 即可） | 想快 / 想给不装 Python 的人用 / 想双击就跑 |
+
+### 版本 A：Python 原型（无需编译，最快上手）
+
+**双击启动**：
 
 ```
 kiro-usage-dashboard/prototype-python/kiro_dashboard.cmd
@@ -29,7 +39,7 @@ kiro-usage-dashboard/prototype-python/kiro_dashboard.cmd
 
 自动打开浏览器到 <http://127.0.0.1:8765/>。
 
-**方式 B：命令行**
+**命令行**：
 
 ```bash
 cd kiro-usage-dashboard/prototype-python
@@ -40,9 +50,33 @@ python kiro_dashboard.py --no-browser       # 不自动开浏览器
 python kiro_dashboard.py --auto-port        # 端口占用时自动往上找
 ```
 
-关闭：命令行窗口按 `Ctrl+C`，或直接关掉窗口。
-
 详细用法看 [`prototype-python/README.md`](./prototype-python/README.md)。
+
+### 版本 B：Rust exe（需一次性搭环境，之后双击 exe）
+
+**前置**：装 Rust + Visual Studio Build Tools。步骤在 [`docs/troubleshooting.md#rust--tauri-开发环境构建-rust-版必需`](./docs/troubleshooting.md#rust--tauri-开发环境构建-rust-版必需)。
+
+**build + 运行**：
+
+```powershell
+cd src-tauri
+
+# dev 模式（快速验证；带 console 显示日志）
+cargo run
+
+# release 模式（12 MB 优化 exe，无 console）
+cargo build --release
+.\target\release\kiro-usage-dashboard.exe
+
+# 打包成 NSIS 安装器（需要先 cargo tauri icon <logo.png>）
+cargo install tauri-cli --version "^2.0" --locked   # 一次性
+cargo tauri icon path\to\your-logo.png              # 生成 icons/
+cargo tauri build
+```
+
+产物：`src-tauri/target/release/kiro-usage-dashboard.exe` + `bundle/nsis/*.exe`（安装器）。
+
+**首次 build 慢是正常的**——Cargo 会下载编译几百个依赖 crate，5-15 分钟；后续增量 build 秒级。
 
 ## 页面结构
 
@@ -71,20 +105,41 @@ python kiro_dashboard.py --auto-port        # 端口占用时自动往上找
 kiro-usage-dashboard/
 ├── README.md                      # 本文件
 ├── LICENSE                        # MIT
+├── .gitignore
 ├── docs/
 │   ├── data-sources.md            # 本地 Kiro 数据源位置和字段说明
-│   └── design-rust-tauri.md       # Rust exe 版本的迁移方案（未来）
-├── prototype-python/              # Python 版本（当前可用）
-│   ├── kiro_dashboard.py          # HTTP 服务器 + 数据扫描
-│   ├── kiro_dashboard.cmd         # Windows 双击启动
+│   ├── design-rust-tauri.md       # Rust exe 版本的架构设计
+│   └── troubleshooting.md         # 常见问题（代理/编译/前端等）
+├── prototype-python/              # 版本 A：Python 原型
+│   ├── kiro_dashboard.py          # HTTP 服务器 + 数据扫描 (~966 行)
+│   ├── kiro_dashboard.cmd         # Windows 双击启动脚本
 │   ├── kiro_stats.py              # CLI 版（跑批处理用）
 │   ├── static/                    # 前端页面
 │   │   ├── index.html
 │   │   ├── style.css
 │   │   └── app.js
-│   └── README.md                  # Python 版详细说明
-└── (未来) src-tauri/              # Rust + Tauri 版本
+│   └── README.md
+├── src-tauri/                     # 版本 B：Rust + Tauri v2 后端
+│   ├── Cargo.toml
+│   ├── tauri.conf.json
+│   ├── build.rs
+│   └── src/
+│       ├── main.rs                # Tauri 入口 + IPC 命令 (get_data / export_csv)
+│       ├── models.rs              # DataResponse 等 struct
+│       ├── util.rs                # base64 变体解码 / 路径查找 / 时区
+│       ├── quota_snapshot.rs      # 读 state.vscdb (rusqlite)
+│       └── scanner/
+│           ├── v2_turns.rs        # 扫 messages.jsonl 里的 usage_summary
+│           ├── v1_sessions.rs     # 扫 workspace-sessions 拿 v1 历史
+│           └── quota_history.rs   # 扫 logs 拿多账号 quota 时间序列
+└── ui/                            # 前端（与 Python 版共用同一份，微调后 Tauri 复用）
+    ├── index.html
+    ├── style.css
+    ├── app.js                     # fetch → invoke 已适配 Tauri
+    └── echarts.min.js             # 打包时随 exe 分发，完全离线
 ```
+
+**Python 原型 vs Rust 版的关系**：数据源解析逻辑 1:1 对应，前端页面几乎完全共用（只有 `fetch('/api/data')` 在 Tauri 里被替换成 `invoke('get_data')`）。所有 KPI、图表、明细表在两个版本里表现完全一致。
 
 ## 数据来源
 
@@ -110,15 +165,15 @@ kiro-usage-dashboard/
 
 想看更完整的账单历史（比如上个月），只能登录对应账号到 Kiro / AWS Q Developer 后台查看。
 
-## 未来：Rust exe 版本
+## 两个版本各自的价值
 
-Python 版当前完全可用。Rust + Tauri 版正在规划中，产物是**单文件 exe (~12 MB)**，无需 Python 环境，双击就跑。
+**Python 原型不会被 Rust 版取代**——两者定位不同：
 
-- 前端 (`static/`) 原样复用，零重写
-- Rust 后端把 Python 三个扫描器 1:1 翻译（约 700 行 Rust）
-- 打包 `cargo tauri build` 一键出 exe
+- **Python 原型** = 参考实现 + 快速改动。想加数据源、想改指标定义、想学习 Kiro 数据结构的人对着 Python 代码改一改立刻能看效果。数据源探索的 `docs/data-sources.md` 就是从这份原型摸出来的。
 
-设计方案完整详见 [docs/design-rust-tauri.md](./docs/design-rust-tauri.md)。
+- **Rust exe** = 生产分发。目标用户只想双击一个 exe 看到自己的用量数字，不用管 Python、不用装环境。
+
+架构 & 设计选型详见 [docs/design-rust-tauri.md](./docs/design-rust-tauri.md)。
 
 ## 常见问题
 

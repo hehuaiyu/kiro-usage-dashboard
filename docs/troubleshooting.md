@@ -169,3 +169,103 @@ curl.exe -L https://cdn.jsdelivr.net/npm/echarts@5.5.1/dist/echarts.min.js -o pr
 ## 后续遇到新问题往这里加
 
 格式建议：`症状 → 根因 → 处理`，每个问题独立一节。
+
+
+## Rust / Tauri 开发环境（构建 Rust 版必需）
+
+如果你只想跑 `prototype-python/` 就跳过这一节。要 build `src-tauri/` 出 exe 才需要装。
+
+### 一次性环境安装
+
+**1. Rust 工具链**（`rustup` 一键管理）
+
+```powershell
+# 方式 A: winget（Windows 10 1809+ 自带）
+winget install --id Rustlang.Rustup
+
+# 方式 B: 官方安装器
+# 到 https://rustup.rs/ 下载 rustup-init.exe，双击默认安装
+```
+
+装完开新终端验证：
+
+```powershell
+rustc --version
+cargo --version
+```
+
+**2. Visual Studio Build Tools**（Rust 的 MSVC 目标必需）
+
+rustup 装完后通常会提示。手动装：
+
+```powershell
+winget install --id Microsoft.VisualStudio.2022.BuildTools --override "--wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"
+```
+
+或到 [Build Tools 下载页](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 勾选 **"Desktop development with C++"** workload 安装。大概 3-5 GB。
+
+**3. WebView2 Runtime**（Windows 11 / Win10 21H2+ 自带，一般无需装）
+
+如果 Tauri 报缺 WebView2，到 [微软下载页](https://developer.microsoft.com/microsoft-edge/webview2/) 装 Evergreen Runtime。
+
+### 首次 build
+
+```powershell
+cd d:\project\kiro-usage-dashboard\src-tauri
+cargo build            # dev 版，几分钟（首次会下载编译几百个依赖）
+```
+
+产物：`target/debug/kiro-usage-dashboard.exe`（几 MB），双击即可运行。
+
+### Release + 打包安装器
+
+需要先装 tauri CLI（一次性）：
+
+```powershell
+cargo install tauri-cli --version "^2.0" --locked
+```
+
+生成图标（tauri.conf.json 里默认引用 `icons/icon.ico` 等，第一次 build 前必须生成）：
+
+```powershell
+# 准备一张 logo.png（建议 1024x1024 或更大）
+cargo tauri icon path\to\logo.png
+```
+
+打包出 exe + NSIS 安装器：
+
+```powershell
+cargo tauri build
+```
+
+产物：
+- `target/release/kiro-usage-dashboard.exe` — 裸 exe，12 MB 左右
+- `target/release/bundle/nsis/Kiro Usage Dashboard_0.1.0_x64-setup.exe` — Windows 安装器
+
+### 首次 build 慢是正常的
+
+初次 `cargo build` 需要下载并编译几百个 crate（Tauri v2 依赖链较长），约 5-15 分钟；后续增量 build 秒级。
+
+依赖下载卡住通常是网络代理问题——参考本文档最上面 "Git 推送到 GitHub 失败"（同样的代理软件虚拟网卡问题会挡 crates.io 下载）。可以配置 Cargo 走代理或换镜像。
+
+### 常见错误
+
+**`error: linker link.exe not found`**
+
+MSVC 工具链没装。走上面第 2 步 Build Tools。
+
+**`error: unable to find WebView2 loader`**
+
+Tauri build 找不到 WebView2 SDK。通常 tauri-build 会自动下载，网络受限时失败。解决：
+1. 手动下载 [WebView2 SDK](https://developer.microsoft.com/microsoft-edge/webview2/) 到 `%USERPROFILE%\.tauri\WebView2Loader.dll`
+2. 或者在良好网络下先跑一次 `cargo build`，第一次会缓存
+
+**`cargo tauri build` 报缺图标**
+
+`tauri.conf.json` 的 `bundle.icon` 引用 `icons/32x32.png` 等文件。跑一次 `cargo tauri icon <你的 logo.png>` 生成即可。
+
+如果暂时不想弄图标，把 `tauri.conf.json` 里 `bundle.active` 改成 `false`，只 `cargo build --release` 出裸 exe（无安装器）也能用。
+
+**首次 `cargo tauri build` 卡在 rustc 或 crate 下载**
+
+见本文档最上面 Git 推送章节——同样的公司代理软件虚拟网卡模式会拦 crates.io。关掉再试。

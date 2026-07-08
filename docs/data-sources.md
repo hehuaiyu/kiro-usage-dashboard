@@ -179,8 +179,8 @@ def decode_kiro_ws_name(name):
 {
   "migratedAt": "2026-07-01T01:39:26.625Z",
   "v2SessionId": "<uuid>",
-  "workspaceHash": "7ac9c52f283af82d",
-  "v1WorkspaceDirectory": "d:\\project\\rv1106_pro",
+  "workspaceHash": "<hash>",
+  "v1WorkspaceDirectory": "d:\\path\\to\\your-project",
   "markerVersion": 2
 }
 ```
@@ -233,11 +233,11 @@ def decode_kiro_ws_name(name):
   ...
   "userInfo": {
     "email": "***SensitiveInformation***",     // 有时被 Kiro 遮蔽为敏感字段
-    "userId": "d-9067642ac7.c43874f8-1061-7055-0fe2-ef6ae617cc3a"
+    "userId": "d-XXXXXXXXXX.XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
   },
   "usageBreakdownList": [{
-    "currentUsage": 3771,
-    "currentUsageWithPrecision": 3771.69,      // ★ 实际扣费
+    "currentUsage": 1234,
+    "currentUsageWithPrecision": 1234.56,      // ★ 实际扣费
     "usageLimit": 5000,
     "unit": "INVOCATIONS",
     "resourceType": "CREDIT",
@@ -265,7 +265,7 @@ def decode_kiro_ws_name(name):
 
 ### 归零/账号切换识别
 
-`currentUsage` 时间序列上如果出现**断崖式下跌**（例如从 4974 直接变 0，且下一次值 < 前一次 × 0.7），大概率是：
+`currentUsage` 时间序列上如果出现**断崖式下跌**（例如前一秒还是 5000 左右，下一秒变成 0 或者一个很小的数），大概率是：
 
 - 服务端切换了账号（多账号场景）
 - 月度重置（正常账单周期）
@@ -296,8 +296,8 @@ SQLite 数据库，`ItemTable` 表存 key/value 键值对。
   },
   "usageBreakdownList": [ /* 初始订阅快照，可能是 0 */ ],
   "userInfo": {
-    "email": "<current>@a1.agentsforge.org",
-    "userId": "d-9067642ac7.c43874f8-1061-7055-0fe2-ef6ae617cc3a"
+    "email": "<current-account-email>",
+    "userId": "d-XXXXXXXXXX.XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX"
   },
   "kiro.resourceNotifications.usageState": {
     "usageBreakdowns": [{
