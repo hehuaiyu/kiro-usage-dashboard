@@ -269,3 +269,25 @@ Tauri build 找不到 WebView2 SDK。通常 tauri-build 会自动下载，网络
 **首次 `cargo tauri build` 卡在 rustc 或 crate 下载**
 
 见本文档最上面 Git 推送章节——同样的公司代理软件虚拟网卡模式会拦 crates.io。关掉再试。
+
+
+### `winget install Microsoft.VisualStudio.2022.BuildTools` 不装 workload
+
+winget 静默模式装 VS 2022 Build Tools 时，即使传了 `--override "--add Microsoft.VisualStudio.Workload.VCTools"`，实测**只装了 vs_installer.exe 引导器（stub），VCTools workload 并没跟着装**——`cargo build` 仍会报 `linker 'link.exe' not found`。
+
+winget 的 bootstrap 日志里会看到 `VS setup process exited with code 1 / Bootstrapper failed`。
+
+**处理**：跳过 winget，直接下 VS 官方 bootstrapper 手动装：
+
+```powershell
+# 1) 下载官方引导器（约 4 MB）
+curl.exe -sSL -o "$env:TEMP\vs_BuildTools.exe" https://aka.ms/vs/17/release/vs_BuildTools.exe
+
+# 2) 静默装 VCTools workload（约 3-5 GB，15-30 分钟）
+& "$env:TEMP\vs_BuildTools.exe" --wait --quiet --norestart --nocache `
+    --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended
+```
+
+装完验证：`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\` 里应该有版本目录，里面有 `bin/Hostx64/x64/cl.exe` 和 `link.exe`。
+
+之前尝试用 `vs_installer.exe install --productId ... --channelId ...` 手动装 workload 会 exit 87（参数无效）——**别用 vs_installer.exe，用官方 bootstrapper**。
