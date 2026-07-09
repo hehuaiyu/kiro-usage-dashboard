@@ -8,7 +8,8 @@
 slint::include_modules!();
 
 use kiro_core::history_store::{default_history_db, HistoryStore};
-use kiro_core::models::Turn;
+use kiro_core::models::{Account, Turn};
+use kiro_core::scanner::quota_history::aggregate_accounts_from_snapshots;
 use kiro_core::scanner::{QuotaHistoryCache, TurnCache, V1SessionCache};
 use kiro_core::util;
 use std::rc::Rc;
@@ -25,6 +26,7 @@ fn diag(msg: &str) {
 struct LoadedData {
     turns: Vec<Turn>,
     v1_count: usize,
+    accounts: Vec<Account>,
 }
 
 fn load_data() -> LoadedData {
@@ -42,7 +44,7 @@ fn load_data() -> LoadedData {
     ));
 
     let v1_count = v1s.len();
-    let all_turns = match HistoryStore::open(default_history_db()) {
+    let (all_turns, accounts) = match HistoryStore::open(default_history_db()) {
         Ok(history) => {
             let _ = history.upsert_turns(&turns);
             let _ = history.upsert_v1_sessions(&v1s);
@@ -51,16 +53,21 @@ fn load_data() -> LoadedData {
                 .flat_map(|a| a.snapshots.iter().cloned())
                 .collect();
             let _ = history.upsert_quota_snapshots(&snaps);
-            history.load_all_turns().unwrap_or(turns)
+            let all_turns = history.load_all_turns().unwrap_or(turns);
+            // 账号从历史库全量 snapshots 重新聚合 (跟 Tauri 版一致)
+            let all_snaps = history.load_all_quota_snapshots().unwrap_or_default();
+            let accounts = aggregate_accounts_from_snapshots(all_snaps);
+            (all_turns, accounts)
         }
         Err(e) => {
             diag(&format!("历史库打开失败, 用当前扫描兜底: {}", e));
-            turns
+            (turns, accts)
         }
     };
     LoadedData {
         turns: all_turns,
         v1_count,
+        accounts,
     }
 }
 
@@ -189,6 +196,57 @@ fn main() -> Result<(), slint::PlatformError> {
     let detail_model = Rc::new(slint::VecModel::from(detail));
     app.set_detail_rows(detail_model.into());
     app.set_detail_sub(format!("{} 条 turn (最近在前)", detail_count).into());
+
+    // 热力图: 7 (周一~周日) × 24 (小时) 的 credits 网格
+    {
+        use chrono::{Datelike, Local, TimeZone, Timelike};
+        let mut heat = [[0.0_f64; 24]; 7];
+        for t in &data.turns {
+            if let Some(d) = Local.timestamp_millis_opt(t.t).single() {
+                let wd = d.weekday().num_days_from_monday() as usize; // 0=周一
+                let h = d.hour() as usize;
+                heat[wd][h] += t.c;
+            }
+        }
+        let hmax = heat
+            .iter()
+            .flat_map(|r| r.iter())
+            .cloned()
+            .fold(0.0_f64, f64::max)
+            .max(0.0001);
+        let heat_rows: Vec<slint::ModelRc<HeatCell>> = (0..7)
+            .map(|d| {
+                let cells: Vec<HeatCell> = (0..24)
+                    .map(|h| HeatCell {
+                        ratio: (heat[d][h] / hmax) as f32,
+                    })
+                    .collect();
+                slint::ModelRc::new(slint::VecModel::from(cells))
+            })
+            .collect();
+        app.set_heat(slint::ModelRc::new(slint::VecModel::from(heat_rows)));
+    }
+
+    // 账号历史
+    let acct_rows: Vec<AccountRow> = data
+        .accounts
+        .iter()
+        .map(|a| AccountRow {
+            uid: a.uid.clone().into(),
+            peak: fmt_credits(a.peak).into(),
+            latest: fmt_credits(a.latest).into(),
+            limit: if a.latest_limit > 0 {
+                a.latest_limit.to_string()
+            } else {
+                "-".into()
+            }
+            .into(),
+            resets: a.resets.to_string().into(),
+        })
+        .collect();
+    let acct_count = acct_rows.len();
+    app.set_account_rows(Rc::new(slint::VecModel::from(acct_rows)).into());
+    app.set_account_sub(format!("{} 个账号 (每次归零 = 切账号/配额重置)", acct_count).into());
 
     diag(&format!(
         "数据已绑定, 即将 run, 累计 {}ms",
