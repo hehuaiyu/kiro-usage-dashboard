@@ -39,6 +39,8 @@ fn flatten_snapshots(accounts: &[models::Account]) -> Vec<QuotaSnapshot> {
         .collect()
 }
 
+
+
 // ---------------------------------------------------------------------------
 // IPC 命令
 // ---------------------------------------------------------------------------
@@ -50,7 +52,11 @@ fn flatten_snapshots(accounts: &[models::Account]) -> Vec<QuotaSnapshot> {
 ///   2) upsert 到本地历史库（INSERT OR IGNORE，不覆盖）
 ///   3) **从历史库读全量**作为返回值（Kiro 那边如果清理了，历史仍在）
 ///   4) accounts 从历史库的原始 snapshots 重新聚合
-#[tauri::command]
+///
+/// v0.4.1 关键修复：标记 `(async)` 让命令在独立线程执行，而不是主线程。
+/// 同步命令默认在主线程跑，里面的 scan() 扫十几秒会冻结整个 UI（白屏 + 鼠标卡顿）。
+/// 参考 Tauri Discussion #3561 / #4191。
+#[tauri::command(async)]
 fn get_data(state: State<'_, AppState>) -> Result<DataResponse, String> {
     // 1) 扫当前 Kiro 数据
     let (curr_turns, scan) = state.v2.scan();
@@ -89,14 +95,16 @@ fn get_data(state: State<'_, AppState>) -> Result<DataResponse, String> {
 }
 
 /// 清空本地历史库。返回清除前的统计（供前端 toast "已清除 X 条"）。
-#[tauri::command]
+/// (async) 同理，SQLite DELETE + VACUUM 也别占主线程。
+#[tauri::command(async)]
 fn clear_history(state: State<'_, AppState>) -> Result<HistoryStats, String> {
     state.history.clear_all()
 }
 
 /// 前端"导出 CSV"按钮走这个命令，直接拿字符串然后前端 Blob 触发下载。
 /// v0.3：从历史库读，包含累积的完整历史（不只是当前 Kiro 目录的数据）。
-#[tauri::command]
+/// (async) 让读库 + 拼字符串在独立线程，不阻塞 UI。
+#[tauri::command(async)]
 fn export_csv(state: State<'_, AppState>) -> Result<String, String> {
     let turns = state.history.load_all_turns().unwrap_or_default();
     let tz_offset_min = util::local_tz_offset_min() as i64;
@@ -182,6 +190,15 @@ fn fmt_duration_ms(ms: i64) -> String {
 // ---------------------------------------------------------------------------
 
 fn main() {
+    // 【关键】无 GPU / 显卡驱动异常的机器上, WebView2 (Chromium 内核) 会先尝试初始化 GPU 进程,
+    // 等待超时后才 fallback 到软件渲染 —— 这个超时导致首次渲染白屏 8-9 秒。
+    // 显式禁用 GPU, 让它一开始就走软件渲染, 跳过超时等待。
+    // 参考微软官方: SetEnvironmentVariable("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--disable-gpu")
+    std::env::set_var(
+        "WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS",
+        "--disable-gpu --disable-gpu-compositing",
+    );
+
     // 数据源路径全部自动探测（跨平台，Windows/macOS/Linux 用 dirs crate）
     let sessions_root = util::default_sessions_root();
     let v1_root = util::default_v1_sessions_root();
@@ -208,34 +225,13 @@ fn main() {
     eprintln!("  state.vscdb:   {}", state_db_path.display());
     eprintln!("  history db:    {}", history_db_path.display());
 
-    // 预扫 + 预 upsert：让首次 IPC 响应又快又已完成合并
-    let (turns0, s0) = v2.scan();
-    let (v1_0, s1) = v1.scan();
-    let (accts0, sa) = quota.scan();
-    let snaps0 = flatten_snapshots(&accts0);
-    let ins_t = history.upsert_turns(&turns0).unwrap_or(0);
-    let ins_v = history.upsert_v1_sessions(&v1_0).unwrap_or(0);
-    let ins_q = history.upsert_quota_snapshots(&snaps0).unwrap_or(0);
-    let hstats = history.stats();
-    eprintln!(
-        "[kiro-usage-dashboard] 预热完成: v2 turn={} ({}ms), v1 session={} ({}ms), account={} ({}ms)",
-        turns0.len(),
-        s0.took_ms,
-        v1_0.len(),
-        s1.took_ms,
-        accts0.len(),
-        sa.took_ms,
-    );
-    eprintln!(
-        "[history] upsert 新增: turn={} v1={} quota={} | 历史库累计: turn={} v1={} quota={} (db {:.1} KB)",
-        ins_t,
-        ins_v,
-        ins_q,
-        hstats.turns_count,
-        hstats.v1_sessions_count,
-        hstats.quota_snapshots_count,
-        hstats.db_size_bytes as f64 / 1024.0,
-    );
+    // v0.4.1: 预扫不再阻塞 main() —— 之前十几秒白屏就是这一坨在挡窗口。
+    // 现在把 Arc clone 一份, 到 tauri::setup 里的后台线程去扫,
+    // 窗口秒开; 首次 get_data 若刚好赶上扫完则直接读历史库, 否则退化到当前扫的空数据 (前端 15s 自动刷新会兜住)
+    let v2_pre = v2.clone();
+    let v1_pre = v1.clone();
+    let quota_pre = quota.clone();
+    let history_pre = history.clone();
 
     let app_state = AppState {
         v2,
@@ -248,6 +244,33 @@ fn main() {
     tauri::Builder::default()
         .setup(move |app| {
             app.manage(app_state);
+
+            // 后台预扫线程：不阻塞窗口显示，扫完后前端下次 15s 自动刷新就能看到
+            std::thread::spawn(move || {
+                let t0 = std::time::Instant::now();
+                let (turns0, s0) = v2_pre.scan();
+                let (v1_0, s1) = v1_pre.scan();
+                let (accts0, sa) = quota_pre.scan();
+                let snaps0 = flatten_snapshots(&accts0);
+                let ins_t = history_pre.upsert_turns(&turns0).unwrap_or(0);
+                let ins_v = history_pre.upsert_v1_sessions(&v1_0).unwrap_or(0);
+                let ins_q = history_pre.upsert_quota_snapshots(&snaps0).unwrap_or(0);
+                let hstats = history_pre.stats();
+                eprintln!(
+                    "[background-warmup] 后台预扫完成 (总耗 {}ms): v2 turn={} ({}ms), v1 session={} ({}ms), account={} ({}ms)",
+                    t0.elapsed().as_millis(),
+                    turns0.len(), s0.took_ms,
+                    v1_0.len(), s1.took_ms,
+                    accts0.len(), sa.took_ms,
+                );
+                eprintln!(
+                    "[history] upsert 新增: turn={} v1={} quota={} | 历史库累计: turn={} v1={} quota={} (db {:.1} KB)",
+                    ins_t, ins_v, ins_q,
+                    hstats.turns_count, hstats.v1_sessions_count, hstats.quota_snapshots_count,
+                    hstats.db_size_bytes as f64 / 1024.0,
+                );
+            });
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![get_data, export_csv, clear_history])

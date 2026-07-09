@@ -11,6 +11,39 @@
 
 ---
 
+## v0.4.0 — UI 风格化 + 简约视图 + 无 GPU 启动性能修复
+
+### 修复
+
+- **无 GPU 机器启动白屏十几秒** —— 这是本版最重要的修复。WebView2（Chromium 内核）在没有 GPU 的机器上，会先尝试初始化 GPU 进程、等待超时、再 fallback 到软件渲染，导致首次渲染白屏 8-9 秒 + 鼠标卡顿。
+  - 修复：启动时设置环境变量 `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = "--disable-gpu --disable-gpu-compositing"`，让 WebView2 直接走软件渲染，跳过 GPU 初始化超时。实测首帧绘制从 8 秒降到 16 毫秒。
+  - 参考微软官方 [Disable hardware acceleration](https://learn.microsoft.com/en-us/answers/questions/1227551/)。
+- **窗口启动白闪** —— `tauri.conf.json` 窗口加 `"backgroundColor": "#0E0F13"`，webview 内容画上前的白底改成跟 UI 一致的深色，消除白闪。
+
+### 变更
+
+- **UI 风格化：向"简约干练"靠拢**
+  - Sidebar 从 220px 宽导航收窄到 68px 图标模式（hover 弹出 tooltip）
+  - 黑猫吉祥物 logo（内联 SVG，紫色眼睛呼应主色）
+  - 卡片圆角加大（统一 `--radius-*` 体系，卡片 16-22px），hover 上抬 + 阴影
+  - 时间范围/图标按钮改胶囊状
+  - 去掉各处紫色辉光（顶部高光条、hero 渐变底、CTA 发光），风格更冷静
+  - 亮色主题改暖灰米调（`--card` #e6e9ef → #e0ddd5），护眼不刺眼
+- **echarts 加载优化** —— 从 `<script defer>` 改成 app.js 里动态异步注入（`loadEchartsAsync`），推迟到首帧绘制之后。图表函数加 echarts 未就绪的容错（先出数据/骨架，图表随后补上）。
+- **IPC 命令标记 `(async)`** —— `get_data` / `export_csv` / `clear_history` 改 `#[tauri::command(async)]`，避免同步命令在主线程执行阻塞 UI。
+
+### 新增
+
+- **简约视图（glance）** —— 新的默认首页。欢迎大卡（黑猫 + 问候语 + 历史库状态）+ 4 张 Bento KPI 大卡 + 一张今日趋势 + "查看完整仪表盘"入口。定位是"打开一眼扫完"，深挖走完整的 6 视图。
+- 左侧导航从 5 项增至 6 项（简约 / 总览 / 趋势 / 工具与工作区 / 账号历史 / 明细）。
+
+### 性能说明（诚实）
+
+- 修复后启动仍有约 **4-5 秒**，几乎全是 **WebView2 runtime 进程冷启动**（Chromium 引擎固有，压不掉）。渲染本身已经流畅（16ms）。
+- 追求秒开需换非 Chromium 的 GUI 框架（egui / Slint 等），后端 Rust 数据层可复用。此为后续探索方向。
+
+---
+
 ## v0.3.0 — 本地持久化历史库 + Kiro 升级适配指南
 
 ### 新增

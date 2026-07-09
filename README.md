@@ -61,6 +61,8 @@ python kiro_dashboard.py --auto-port        # 端口占用时自动往上找
 - 装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 并勾选 **Desktop development with C++** workload（`link.exe` 必需，约 3-5 GB）
 - WebView2 Runtime（Win10/11 一般自带；缺失时从 [微软官网](https://developer.microsoft.com/microsoft-edge/webview2/) 装 Evergreen Runtime）
 
+> **无 GPU / 虚拟机 / 远程桌面环境注意**：这类机器上 WebView2 首次渲染可能卡顿。本工具已默认禁用 GPU 加速（`--disable-gpu`）走软件渲染规避此问题。即便如此，首次启动仍有约 4-5 秒是 WebView2 (Chromium) runtime 冷启动，属框架固有开销。
+
 **build + 运行**：
 
 ```powershell
@@ -92,10 +94,11 @@ cargo tauri build
 - 手动刷新按钮
 - 主题切换（暗 ↔ 亮）
 
-**左侧导航**（5 视图，可用 URL hash 直达 `#overview` / `#trends` / ...）
+**左侧导航**（6 视图，窄图标栏 + hover tooltip，可用 URL hash 直达 `#glance` / `#overview` / `#trends` / ...）
 
 | 视图 | 内容 |
 |---|---|
+| **简约**（默认首页） | 欢迎大卡（吉祥物 + 问候语 + 历史库状态）+ 4 张 Bento KPI 大卡 + 今日趋势 + "查看完整仪表盘"入口。一眼扫完 |
 | **总览** | 指标说明（折叠）+ KPI 卡（估算累计 / 跨账号计费峰值和 / Turn 数 / 累计耗时 / Session 数）+ 精简趋势速览 |
 | **趋势** | 完整趋势图（credits 柱状 + turn 数/耗时可选折线，粒度切换 时/日/周/月，超过 30 桶出 dataZoom）+ 24×7 小时热力图 |
 | **工具与工作区** | 工具调用分布 Treemap（可切"按 credits / 按 turn 数"）+ Workspace 环形图（v1+v2 合并占比）+ Top Sessions 排行表 |

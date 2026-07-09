@@ -5,17 +5,33 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Kiro Usage Dashboard</title>
   <link rel="stylesheet" href="style.css" />
-  <!-- ECharts 从本地加载（打包后跟随 exe 分发，完全离线可用） -->
-  <script src="echarts.min.js"></script>
+  <!--
+    v0.4.1: echarts.min.js (~1MB) 从 head 挪到 body 末尾 (下面) + defer.
+    之前放在 head 且无 defer 会同步阻塞 HTML parsing, 冷启下白屏 5-15 秒.
+    现在浏览器会立即渲染 body 骨架 (sidebar / topbar / 空 KPI 卡), echarts 后台并行加载.
+  -->
 </head>
 <body>
 
 <div class="app-shell">
 
-  <!-- ============ 左侧导航 ============ -->
+  <!-- ============ 左侧导航（v0.4: 窄图标模式 + 黑猫吉祥物） ============ -->
   <aside class="sidebar">
-    <div class="sidebar-brand">
-      <span class="brand-logo">◆</span>
+    <div class="sidebar-brand" title="Kiro Usage Dashboard">
+      <!-- 黑猫吉祥物 SVG：单色主体用 currentColor 跟随主题反色；紫眼呼应 accent -->
+      <svg class="brand-cat" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-label="黑猫吉祥物">
+        <!-- 头 + 耳朵一体 -->
+        <path d="M15 22 L12 5 L26 15 L38 15 L52 5 L49 22 A17 17 0 1 1 15 22 Z" fill="currentColor"/>
+        <!-- 眼睛（紫色椭圆 + 白色高光） -->
+        <ellipse cx="24" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+        <ellipse cx="40" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+        <circle cx="23.3" cy="26" r="0.9" fill="#ffffff"/>
+        <circle cx="39.3" cy="26" r="0.9" fill="#ffffff"/>
+        <!-- 鼻子（紫色小三角） -->
+        <path d="M30 34 L34 34 L32 36.6 Z" fill="#8b5cf6"/>
+        <!-- 嘴（简单弧线，W 形） -->
+        <path d="M32 36.6 Q30 38.6 28 37.6 M32 36.6 Q34 38.6 36 37.6" stroke="currentColor" stroke-width="0.9" fill="none" opacity="0.55" stroke-linecap="round"/>
+      </svg>
       <div class="sidebar-brand-text">
         <div class="brand-title">Kiro Usage</div>
         <div class="brand-sub">Dashboard</div>
@@ -23,7 +39,17 @@
     </div>
 
     <nav class="sidebar-nav">
-      <a class="nav-item" data-view="overview" href="#overview">
+      <a class="nav-item" data-view="glance" data-tooltip="简约" href="#glance">
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="4"></circle>
+          <path d="M12 2v2"></path><path d="M12 20v2"></path>
+          <path d="M4.93 4.93l1.41 1.41"></path><path d="M17.66 17.66l1.41 1.41"></path>
+          <path d="M2 12h2"></path><path d="M20 12h2"></path>
+          <path d="M6.34 17.66l-1.41 1.41"></path><path d="M19.07 4.93l-1.41 1.41"></path>
+        </svg>
+        <span>简约</span>
+      </a>
+      <a class="nav-item" data-view="overview" data-tooltip="总览" href="#overview">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="3" width="7" height="9"></rect>
           <rect x="14" y="3" width="7" height="5"></rect>
@@ -32,20 +58,20 @@
         </svg>
         <span>总览</span>
       </a>
-      <a class="nav-item" data-view="trends" href="#trends">
+      <a class="nav-item" data-view="trends" data-tooltip="趋势" href="#trends">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 7 13.5 15.5 8.5 10.5 2 17"></polyline>
           <polyline points="16 7 22 7 22 13"></polyline>
         </svg>
         <span>趋势</span>
       </a>
-      <a class="nav-item" data-view="tools" href="#tools">
+      <a class="nav-item" data-view="tools" data-tooltip="工具与工作区" href="#tools">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"></path>
         </svg>
         <span>工具与工作区</span>
       </a>
-      <a class="nav-item" data-view="accounts" href="#accounts">
+      <a class="nav-item" data-view="accounts" data-tooltip="账号历史" href="#accounts">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
           <circle cx="9" cy="7" r="4"></circle>
@@ -54,7 +80,7 @@
         </svg>
         <span>账号历史</span>
       </a>
-      <a class="nav-item" data-view="sessions" href="#sessions">
+      <a class="nav-item" data-view="sessions" data-tooltip="明细" href="#sessions">
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
           <polyline points="14 2 14 8 20 8"></polyline>
@@ -68,8 +94,9 @@
 
     <div class="sidebar-footer">
       <button class="btn-clear-history" id="btn-clear-history"
+              data-tooltip="清除历史库"
               title="清空本地持久化历史库（不影响 Kiro 原始数据）">
-        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="3 6 5 6 21 6"></polyline>
           <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
           <path d="M10 11v6"></path>
@@ -78,8 +105,8 @@
         <span>清除历史库</span>
       </button>
       <div class="version-line">
-        <span class="version">v0.3.0</span>
-        <span class="build">Rust · Tauri v2</span>
+        <span class="version">v0.4</span>
+        <span class="build">Tauri v2</span>
       </div>
     </div>
   </aside>
@@ -132,6 +159,81 @@
     </div>
 
     <!-- =========================================================
+         视图 0：简约 (glance) — v0.4 新增，默认首页
+         欢迎大卡 + 4 张 Bento KPI + 一张主图 + CTA
+         "打开就一眼扫完"的入口视图；深挖走完整仪表盘
+         ========================================================= -->
+    <section class="view active" data-view="glance">
+      <!-- 欢迎大卡 -->
+      <div class="glance-hero">
+        <div class="glance-hero-cat">
+          <svg viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <path d="M15 22 L12 5 L26 15 L38 15 L52 5 L49 22 A17 17 0 1 1 15 22 Z" fill="currentColor"/>
+            <ellipse cx="24" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+            <ellipse cx="40" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+            <circle cx="23.3" cy="26" r="0.9" fill="#ffffff"/>
+            <circle cx="39.3" cy="26" r="0.9" fill="#ffffff"/>
+            <path d="M30 34 L34 34 L32 36.6 Z" fill="#8b5cf6"/>
+            <path d="M32 36.6 Q30 38.6 28 37.6 M32 36.6 Q34 38.6 36 37.6" stroke="currentColor" stroke-width="0.9" fill="none" opacity="0.55" stroke-linecap="round"/>
+          </svg>
+        </div>
+        <div class="glance-hero-text">
+          <div class="glance-hero-title" id="glance-hero-title">你好 👋</div>
+          <div class="glance-hero-sub" id="glance-hero-sub">本地历史库准备就绪，随时可用</div>
+        </div>
+        <a class="glance-hero-cta" href="#overview" data-view-link="overview">
+          <span>查看完整仪表盘</span>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+      </div>
+
+      <!-- Bento KPI 4 张：只放最核心指标，一眼扫完 -->
+      <div class="bento-grid">
+        <div class="bento-card bento-accent" data-bento-color="violet">
+          <div class="bento-icon">💰</div>
+          <div class="bento-label">估算累计</div>
+          <div class="bento-value" id="bento-est">-</div>
+          <div class="bento-hint" id="bento-est-hint">Est. Credits Used</div>
+        </div>
+        <div class="bento-card" data-bento-color="cyan">
+          <div class="bento-icon">💬</div>
+          <div class="bento-label">Turn 数</div>
+          <div class="bento-value" id="bento-turns">-</div>
+          <div class="bento-hint" id="bento-turns-hint">-</div>
+        </div>
+        <div class="bento-card" data-bento-color="amber">
+          <div class="bento-icon">⏱️</div>
+          <div class="bento-label">累计耗时</div>
+          <div class="bento-value" id="bento-elapsed">-</div>
+          <div class="bento-hint" id="bento-elapsed-hint">-</div>
+        </div>
+        <div class="bento-card" data-bento-color="rose">
+          <div class="bento-icon">📁</div>
+          <div class="bento-label">Session 总数</div>
+          <div class="bento-value" id="bento-sessions">-</div>
+          <div class="bento-hint" id="bento-sessions-hint">v1 + v2</div>
+        </div>
+      </div>
+
+      <!-- 用量速览：一张主趋势（按当前 range 与日粒度） -->
+      <section class="panel">
+        <div class="panel-header">
+          <div class="panel-title">
+            用量速览
+            <span class="panel-sub" id="glance-chart-sub">按日</span>
+          </div>
+          <div class="panel-actions">
+            <a class="btn-link" href="#trends" data-view-link="trends">深挖趋势 →</a>
+          </div>
+        </div>
+        <div class="chart-box chart-mid" id="chart-glance"></div>
+      </section>
+    </section>
+
+    <!-- =========================================================
          视图 1：总览 (overview)
          KPI + 精简趋势 + 指标说明
          ========================================================= -->
@@ -164,28 +266,43 @@
 
       <!-- KPI 卡片 -->
       <section class="kpi-row">
-        <div class="kpi-card" title="所有 turn 的 Est. Credits Used 累加。未折算的原始估价。">
-          <div class="kpi-label">估算累计 (Est.)</div>
+        <div class="kpi-card" data-kpi-color="violet" title="所有 turn 的 Est. Credits Used 累加。未折算的原始估价。">
+          <div class="kpi-head">
+            <span class="kpi-icon">💰</span>
+            <span class="kpi-label">估算累计 (Est.)</span>
+          </div>
           <div class="kpi-value" id="kpi-est">-</div>
           <div class="kpi-hint">Est. Credits Used 之和</div>
         </div>
-        <div class="kpi-card" title="每个账号历史 currentUsage 峰值之和。服务端已折算的实际扣费。">
-          <div class="kpi-label">跨账号计费峰值和</div>
+        <div class="kpi-card" data-kpi-color="blue" title="每个账号历史 currentUsage 峰值之和。服务端已折算的实际扣费。">
+          <div class="kpi-head">
+            <span class="kpi-icon">💳</span>
+            <span class="kpi-label">跨账号计费峰值和</span>
+          </div>
           <div class="kpi-value" id="kpi-cross-peak">-</div>
           <div class="kpi-hint" id="kpi-cross-peak-hint">已折算实际扣费</div>
         </div>
-        <div class="kpi-card" title='一次完整"提问 → 响应完成" = 一个 turn。'>
-          <div class="kpi-label">Turn 数</div>
+        <div class="kpi-card" data-kpi-color="cyan" title='一次完整"提问 → 响应完成" = 一个 turn。'>
+          <div class="kpi-head">
+            <span class="kpi-icon">💬</span>
+            <span class="kpi-label">Turn 数</span>
+          </div>
           <div class="kpi-value" id="kpi-turns">-</div>
           <div class="kpi-hint" id="kpi-turns-hint">含计费 turn 数</div>
         </div>
-        <div class="kpi-card" title="所有 turn 的 Elapsed time 累加。">
-          <div class="kpi-label">累计耗时</div>
+        <div class="kpi-card" data-kpi-color="amber" title="所有 turn 的 Elapsed time 累加。">
+          <div class="kpi-head">
+            <span class="kpi-icon">⏱️</span>
+            <span class="kpi-label">累计耗时</span>
+          </div>
           <div class="kpi-value" id="kpi-elapsed">-</div>
           <div class="kpi-hint" id="kpi-elapsed-hint">平均每 turn</div>
         </div>
-        <div class="kpi-card" title="v1 (旧格式) + v2 (新格式) 的 session 总数。">
-          <div class="kpi-label">所有 Session (v1+v2)</div>
+        <div class="kpi-card" data-kpi-color="rose" title="v1 (旧格式) + v2 (新格式) 的 session 总数。">
+          <div class="kpi-head">
+            <span class="kpi-icon">📁</span>
+            <span class="kpi-label">所有 Session (v1+v2)</span>
+          </div>
           <div class="kpi-value" id="kpi-all-sessions">-</div>
           <div class="kpi-hint" id="kpi-all-sessions-hint">跨所有账号与项目</div>
         </div>
@@ -449,6 +566,11 @@
   ECharts 未加载。请确认 <code>echarts.min.js</code> 与 <code>index.html</code> 在同一目录。
 </div>
 
+<!--
+  v0.4.1: echarts 不再用 <script> 直接引 —— 改由 app.js 异步注入 (loadEchartsAsync).
+  这样 app.js 立即执行渲染骨架+数据, 不必等 1MB 的 echarts 下载+parse (实测占 9 秒).
+  app.js 放 body 末尾, DOM 已就绪, 无需 defer.
+-->
 <script src="app.js"></script>
 </body>
 </html>

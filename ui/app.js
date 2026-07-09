@@ -68,6 +68,8 @@ const state = {
 
 // ECharts 实例句柄
 function chartOf(el, name) {
+  // echarts 异步加载中或容器不存在时返回 null，调用方跳过绘图
+  if (typeof echarts === 'undefined' || !el) return null;
   if (!state.charts[name]) {
     state.charts[name] = echarts.init(el, null, { renderer: 'canvas' });
   }
@@ -395,6 +397,7 @@ function renderKPI(turns) {
 
 // -------- 主趋势图 --------
 function renderTrend(turns) {
+  if (typeof echarts === 'undefined') return;  // echarts 异步加载中, ready 后会重绘
   const range = computeRange();
   const buckets = aggregateByGran(turns, state.gran, range);
   const useArea = state.gran === 'week' || state.gran === 'month';
@@ -590,6 +593,7 @@ function labelOfGran(g) {
 
 // -------- 24×7 热力图 --------
 function renderHeatmap(turns) {
+  if (typeof echarts === 'undefined') return;  // echarts 异步加载中, ready 后会重绘
   // 累加：credits[weekday][hour]，weekday 0=周一 ... 6=周日
   const grid = Array.from({ length: 7 }, () => new Array(24).fill(0));
   for (const t of turns) {
@@ -672,6 +676,7 @@ function renderHeatmap(turns) {
 
 // -------- 工具 Treemap --------
 function renderTools(turns) {
+  if (typeof echarts === 'undefined') return;  // echarts 异步加载中, ready 后会重绘
   // 每 turn 的 credits 均摊到它调用的工具
   const map = new Map();
   for (const t of turns) {
@@ -798,6 +803,7 @@ function renderTopSessions(turns) {
 // -------- Workspace 环形 --------
 // 用"session 数"作为占比维度，混合 v1 + v2（credits 只有 v2 有，不适合跨源统计）。
 function renderWorkspace(turns) {
+  if (typeof echarts === 'undefined') return;  // echarts 异步加载中, ready 后会重绘
   const map = new Map();  // ws -> session_count
   // v2：按 aid 去重
   const v2Seen = new Map(); // ws -> Set(aid)
@@ -971,6 +977,8 @@ function renderAccounts() {
   document.getElementById('accounts-sub').textContent = `${accs.length} 个账号`;
 
   // ---- ECharts 折线：每个账号一条线 ----
+  // echarts 异步加载中时整块跳过（表格在下方照常渲染），ready 后 render() 会重绘
+  if (typeof echarts !== 'undefined') {
   const border = css('--border-strong');
   const fg = css('--fg');
   const fgDim = css('--fg-dim');
@@ -1050,11 +1058,12 @@ function renderAccounts() {
 
   if (accs.length && isFinite(tMin)) {
     const chart = chartOf(document.getElementById('chart-accounts'), 'accounts');
-    chart.setOption(option, true);
+    if (chart) chart.setOption(option, true);
   } else {
     document.getElementById('chart-accounts').innerHTML =
       '<div style="height:100%;display:grid;place-items:center;color:var(--fg-mute)">暂无账号 quota 快照数据</div>';
   }
+  }  // end if (echarts ready)
 
   // ---- 表格 ----
   const tbody = document.querySelector('#accounts-table tbody');
@@ -1269,6 +1278,7 @@ function initTheme() {
 // ============================================================
 
 const VIEW_TITLES = {
+  glance: '简约',
   overview: '总览',
   trends: '趋势',
   tools: '工具与工作区',
@@ -1316,7 +1326,8 @@ function switchView(name, opts = {}) {
 // 初始化路由：读 hash + 绑定 nav 点击 + hashchange
 function initRouter() {
   const initial = (location.hash || '').slice(1);
-  const start = VALID_VIEWS.has(initial) ? initial : 'overview';
+  // v0.4: 默认首页从 overview 改为 glance (简约视图)
+  const start = VALID_VIEWS.has(initial) ? initial : 'glance';
 
   document.querySelectorAll('.nav-item[data-view]').forEach(a => {
     a.addEventListener('click', (e) => {
@@ -1368,7 +1379,9 @@ function render() {
 
   const view = state.view;
 
-  if (view === 'overview') {
+  if (view === 'glance') {
+    renderGlance(rangeArr);
+  } else if (view === 'overview') {
     renderTrendPreview(rangeArr);
   } else if (view === 'trends') {
     renderTrend(rangeArr);
@@ -1395,8 +1408,124 @@ function render() {
   }
 }
 
+// v0.4: 简约视图渲染。核心 = 4 张 Bento KPI + 欢迎大卡文案 + 一张主图。
+// 定位是"打开就一眼扫完"，所以布局精简，只放最关键的数据。
+function renderGlance(turns) {
+  // ---- 1) Bento KPI 4 张 ----
+  const sumC = turns.reduce((s, t) => s + t.c, 0);
+  const sumE = turns.reduce((s, t) => s + t.e, 0);
+  const priced = turns.filter(t => t.c > 0);
+
+  const setText = (id, val) => {
+    const el = document.getElementById(id);
+    if (el) el.textContent = val;
+  };
+
+  setText('bento-est', fmtCredits(sumC));
+  setText('bento-est-hint',
+    priced.length ? `含计费 turn ${priced.length}` : 'Est. Credits Used');
+
+  setText('bento-turns', turns.length.toLocaleString('zh-CN'));
+  setText('bento-turns-hint',
+    priced.length ? `${priced.length} 条含 credits` : '当前范围无计费 turn');
+
+  setText('bento-elapsed', fmtDuration(sumE));
+  setText('bento-elapsed-hint',
+    priced.length ? `平均 ${fmtDuration(Math.round(sumE / priced.length))} / turn` : '-');
+
+  // v2 sessions 按 agent_session_id 去重
+  const v2SessSet = new Set();
+  for (const t of state.turns) if (t.aid) v2SessSet.add(t.aid);
+  const v1Count = (state.v1Sessions || []).length;
+  const totalSess = v1Count + v2SessSet.size;
+  setText('bento-sessions', totalSess.toLocaleString('zh-CN'));
+  setText('bento-sessions-hint', `v1 ${v1Count} · v2 ${v2SessSet.size}`);
+
+  // ---- 2) Hero 欢迎卡文案（用问候语 + 历史库状态） ----
+  const hour = new Date().getHours();
+  const greeting = hour < 6 ? '深夜好'
+                 : hour < 12 ? '早上好'
+                 : hour < 18 ? '下午好'
+                 : '晚上好';
+  setText('glance-hero-title', `${greeting} 👋`);
+
+  const hs = state.historyStats;
+  const subEl = document.getElementById('glance-hero-sub');
+  if (subEl) {
+    if (hs && hs.turns_count > 0) {
+      const startDate = hs.earliest_ts ? fmtLocalDate(hs.earliest_ts) : '-';
+      subEl.textContent =
+        `本地历史库已累计 ${hs.turns_count.toLocaleString('zh-CN')} 条 turn，` +
+        `起始 ${startDate}。Kiro 那边即使清了原始数据，你的历史都在这。`;
+    } else {
+      subEl.textContent =
+        '本地历史库准备就绪。启动 Kiro 使用后，工具会自动把用量记录 snapshot 下来。';
+    }
+  }
+
+  // ---- 3) chart-glance: 按日柱状图（当前时间范围） ----
+  // echarts 异步加载中时先跳过图表（KPI/hero 上面已渲染），ready 后重绘
+  if (typeof echarts === 'undefined') { setText('glance-chart-sub', '图表加载中…'); return; }
+  const range = computeRange();
+  const buckets = aggregateByGran(turns, 'day', range);
+  const xData = buckets.map(b => b.key.slice(5));   // MM-DD
+  const credits = buckets.map(b => +b.credits.toFixed(2));
+
+  const accent = css('--accent') || '#8b5cf6';
+  const accent2 = css('--accent-2') || '#3b82f6';
+  const fgDim = css('--fg-dim') || '#a1a5b3';
+  const border = css('--border-strong') || '#2e3341';
+
+  const gradient = new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+    { offset: 0, color: accent },
+    { offset: 1, color: accent2 },
+  ]);
+
+  const option = {
+    animation: true,
+    animationDuration: 500,
+    grid: { top: 20, right: 20, bottom: 34, left: 50 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: css('--card') || '#12141c',
+      borderColor: border,
+      textStyle: { color: css('--fg') || '#e5e7eb' },
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(139,92,246,0.08)' } },
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisLine: { lineStyle: { color: border } },
+      axisTick: { show: false },
+      axisLabel: { color: fgDim, fontSize: 11, hideOverlap: true },
+    },
+    yAxis: {
+      type: 'value',
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: border, opacity: 0.3, type: 'dashed' } },
+      axisLabel: { color: fgDim, fontSize: 11 },
+    },
+    series: [{
+      name: 'Credits',
+      type: 'bar',
+      data: credits,
+      itemStyle: { color: gradient, borderRadius: [6, 6, 0, 0] },
+      emphasis: { itemStyle: { color: css('--bar-grad-hi') || '#a78bfa' } },
+      barMaxWidth: 28,
+    }],
+  };
+
+  const chart = chartOf(document.getElementById('chart-glance'), 'glance');
+  chart.setOption(option, true);
+
+  const rangeLabel = { today: '今日', week: '本周', month: '本月', '30d': '近 30 天', all: '全部' }[state.range] || state.range;
+  setText('glance-chart-sub', `${rangeLabel} · 按日 · ${buckets.length} 天`);
+}
+
 // 总览视图的精简趋势图：按日聚合当前 range，只画 credits 一条柱，无叠加、无 dataZoom。
 function renderTrendPreview(turns) {
+  if (typeof echarts === 'undefined') return;  // echarts 异步加载中, ready 后会重绘
   const range = computeRange();
   const buckets = aggregateByGran(turns, 'day', range);
   const xData = buckets.map(b => b.key.slice(5)); // 只显示 MM-DD
@@ -1466,9 +1595,12 @@ function updateFooter() {
   if (s) parts.push(`v2: ${s.files} 文件 (${s.took_ms}ms)`);
   if (s1) parts.push(`v1: ${s1.files} sessions (${s1.took_ms}ms)`);
   if (sa) parts.push(`quota-log: ${sa.files} 文件/${state.accounts.length} 账号 (${sa.took_ms}ms)`);
-  foot1.textContent = parts.join('  ·  ');
-  document.getElementById('footer-server').textContent =
-    `服务时间 ${new Date(state.lastServerTs).toLocaleString('zh-CN', { hour12: false })}`;
+  // v0.4.1: 首次数据还没到时显示"扫描中...", 而非空字符串或 "1970/1/1"
+  foot1.textContent = parts.length ? parts.join('  ·  ') : '扫描中...';
+  const srvEl = document.getElementById('footer-server');
+  srvEl.textContent = state.lastServerTs
+    ? `服务时间 ${new Date(state.lastServerTs).toLocaleString('zh-CN', { hour12: false })}`
+    : '服务时间 加载中...';
 
   // v0.3+: 历史库状态
   const hs = state.historyStats;
@@ -1663,19 +1795,40 @@ function filteredTurnsForDetail() {
   return rangeArr;
 }
 
+// v0.4.1: echarts 改为异步加载 —— 这是解决启动白屏的关键。
+// 之前 echarts.min.js (1MB) 用 <script defer> 且排在 app.js 前, 导致 app.js 必须
+// 等 1MB 脚本下载+parse 完 (实测占启动 9 秒) 才执行 → 骨架和数据都卡住不显示。
+// 现在 app.js 立即执行渲染骨架+数据, echarts 在后台异步加载, 加载完再补绘图表。
+let echartsLoading = false;
+function loadEchartsAsync() {
+  if (typeof echarts !== 'undefined' || echartsLoading) return;
+  echartsLoading = true;
+  const s = document.createElement('script');
+  s.src = 'echarts.min.js';
+  s.onload = () => {
+    render();   // echarts ready, 重新渲染当前视图 (这次图表会画出来)
+  };
+  s.onerror = () => {
+    echartsLoading = false;
+    const le = document.getElementById('load-error');
+    if (le) le.classList.remove('hidden');
+    console.error('echarts.min.js 加载失败');
+  };
+  document.body.appendChild(s);
+}
+
 async function boot() {
-  // ECharts 未加载检查
-  if (typeof echarts === 'undefined') {
-    document.getElementById('load-error').classList.remove('hidden');
-    console.error('ECharts 未加载。请确认 echarts.min.js 在同目录，或在 Tauri build 前先下载。');
-    return;
-  }
   initTheme();
   bindEvents();
-  await fetchData(false);
-  // initRouter 内部会调 switchView() → render()
+
+  // 立即渲染骨架 + 数据 (不依赖 echarts; 图表函数检测到 echarts 未加载会自动跳过)
   initRouter();
+  fetchData(false).catch(() => { /* 错误已在 fetchData 内 setLiveStatus */ });
   startAutoRefresh();
+
+  // echarts 加载推迟到首帧绘制之后：先让骨架/数据画出来，再让主线程去 parse echarts (1MB)，
+  // 避免 parse 阻塞首屏。双 rAF 确保首帧已提交。
+  requestAnimationFrame(() => requestAnimationFrame(() => loadEchartsAsync()));
 }
 
 // 等 DOM & ECharts 就绪
