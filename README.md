@@ -24,8 +24,8 @@
 | | Python 原型 | Rust exe (Tauri) |
 |---|---|---|
 | 入口 | `prototype-python/kiro_dashboard.cmd` | `src-tauri/target/release/kiro-usage-dashboard.exe` |
-| 依赖 | Python 3.9+（脚本会自动探测 miniconda / anaconda / py launcher / PATH） | 无依赖（Win10 1809+ 自带 WebView2） |
-| 分发大小 | 全套代码 ~1.2 MB | 单文件 exe ~12 MB |
+| 依赖 | Python 3.9+（脚本会自动探测 miniconda / anaconda / py launcher / PATH） | 无依赖（通常 Win10/11 已自带 WebView2 Runtime；缺失时装 [Evergreen](https://developer.microsoft.com/microsoft-edge/webview2/) 一次） |
+| 分发大小 | 全套代码 ~1.2 MB | 单文件 exe ~5 MB |
 | 启动速度 | 冷启 1-2 s（Python interp 启动） | 冷启 < 500 ms |
 | 用法场景 | 想直接看代码 / 想改逻辑 / 别人机器上跑（有 Python 即可） | 想快 / 想给不装 Python 的人用 / 想双击就跑 |
 
@@ -80,24 +80,24 @@ cargo tauri build
 
 ## 页面结构
 
-顶部
-- 指标说明面板（可折叠）—— 解释"估算累计 vs 跨账号计费峰值和"等术语的区别
-- KPI 卡（5 张）—— 估算累计 / 跨账号计费峰值和 / Turn 数 / 累计耗时 / 所有 Session
-- 时间粒度切换（时 / 日 / 周 / 月）+ 时间范围（今日 / 本周 / 本月 / 30 天 / 全部）
-- 实时状态指示器（脉动绿点 + "刚刚 / 5s 前"）
+**顶栏**（全局，各视图共用）
+- 当前视图标题
+- 时间范围切换（今日 / 本周 / 本月 / 30 天 / 全部）
+- 实时状态指示器（脉动圆点 + "刚刚 / 5s 前"）
+- 手动刷新按钮
 - 主题切换（暗 ↔ 亮）
 
-中部
-- 主趋势图（credits 柱状 + turn 数/耗时可选折线，超过 30 桶自动出现 dataZoom）
-- 24×7 小时热力图
-- 工具调用分布 Treemap（可切"按 credits" / "按 turn 数"）
-- Top Sessions 排行表（按 credits 降序）
-- Workspace 环形图（v1 + v2 合并占比）
+**左侧导航**（5 视图，可用 URL hash 直达 `#overview` / `#trends` / ...）
 
-底部
-- **Turn 明细表**：v2 数据，可搜索、状态筛选、workspace 筛选、排序、分页、导 CSV
-- **账号切换历史面板**：多账号 quota 时间序列折线 + 账号列表（uid / 时段 / 峰值 / 归零次数）
-- **v1 Sessions 表**：旧格式历史会话，可按 workspace 筛选和搜索
+| 视图 | 内容 |
+|---|---|
+| **总览** | 指标说明（折叠）+ KPI 卡（估算累计 / 跨账号计费峰值和 / Turn 数 / 累计耗时 / Session 数）+ 精简趋势速览 |
+| **趋势** | 完整趋势图（credits 柱状 + turn 数/耗时可选折线，粒度切换 时/日/周/月，超过 30 桶出 dataZoom）+ 24×7 小时热力图 |
+| **工具与工作区** | 工具调用分布 Treemap（可切"按 credits / 按 turn 数"）+ Workspace 环形图（v1+v2 合并占比）+ Top Sessions 排行表 |
+| **账号历史** | 多账号 quota 时间序列折线（跨账号叠加）+ 账号列表（uid / 时段 / 峰值 / 归零次数 / 快照数） |
+| **明细** | Tab 切换 v2 Turn 明细表（搜索/状态/workspace 筛选/排序/分页/CSV 导出）与 v1 Sessions 表（旧格式历史） |
+
+**响应式**：窗口宽 < 900px 时 sidebar 自动折叠到顶部横向，只显示图标。
 
 ## 目录结构
 
@@ -191,6 +191,10 @@ A：CDN 被墙。Python 版可以手动下载 `echarts.min.js` 放到 `prototype
 
 **Q：Kiro 更新了新版本，数据结构变了怎么办？**
 A：本工具的数据源解析可能失效。请提 issue 或参考 [docs/data-sources.md](./docs/data-sources.md) 自行适配。
+
+## 变更记录
+
+详见 [docs/changelog.md](./docs/changelog.md)。最新版本可在 [GitHub Releases](https://github.com/hehuaiyu/kiro-usage-dashboard/releases) 下载编译好的 Windows exe。
 
 ## 贡献
 

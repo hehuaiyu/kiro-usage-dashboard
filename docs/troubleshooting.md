@@ -291,3 +291,143 @@ curl.exe -sSL -o "$env:TEMP\vs_BuildTools.exe" https://aka.ms/vs/17/release/vs_B
 装完验证：`C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Tools\MSVC\` 里应该有版本目录，里面有 `bin/Hostx64/x64/cl.exe` 和 `link.exe`。
 
 之前尝试用 `vs_installer.exe install --productId ... --channelId ...` 手动装 workload 会 exit 87（参数无效）——**别用 vs_installer.exe，用官方 bootstrapper**。
+
+
+---
+
+## Tauri v2 前端拿不到 `window.__TAURI__`（v0.2 关键坑）
+
+### 症状
+
+exe 打开后窗口和 UI 骨架都在，但**数据全是 0 / 空**：
+
+- KPI 全部 `0.00`
+- 图表空白
+- 页面右上角状态圆点是**红色**
+- 底部 "服务时间" 显示 `1970/1/1 08:00:00`（UNIX epoch + UTC+8 兜底）
+
+浏览器直接开 Python 版 `http://127.0.0.1:8765/` 却完全正常。
+
+### 根因
+
+**Tauri v2 默认不再把 `window.__TAURI__` 挂到全局 window**。Tauri v1 时代的 `window.__TAURI__.invoke(...)` 用法在 v2 里默认失效——必须在 `tauri.conf.json` 里显式打开 `app.withGlobalTauri: true` 才注入。
+
+我们的前端 `app.js` 里 `invokeGetData()` 这样写：
+
+```js
+const tauri = window.__TAURI__;
+if (tauri && tauri.core && typeof tauri.core.invoke === 'function') {
+  return await tauri.core.invoke('get_data');
+}
+// fallback: fetch('/api/data')
+```
+
+`window.__TAURI__` 拿不到 → 走到 fetch fallback → Tauri 里没 HTTP server → 请求 404 → 前端全走默认空数据。
+
+参考：[Tauri v2 官方 API 文档 - namespacecore](https://v2.tauri.app/reference/javascript/api/namespacecore/) 和 [Discussion #11586](https://github.com/tauri-apps/tauri/discussions/11586) 都提到同样症状。
+
+### 处理
+
+**主修：`tauri.conf.json` 打开 `withGlobalTauri`**
+
+```json
+{
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [...]
+  }
+}
+```
+
+改完必须 `cargo build --release` 重编，因为前端资源被内嵌进 exe。
+
+**兜底：前端加一路 `__TAURI_INTERNALS__`**
+
+Tauri v2 内部实际用的是 `window.__TAURI_INTERNALS__.invoke`（内部 API，但一直存在）。加一路兜底，就算未来忘配 `withGlobalTauri` 也不至于挂：
+
+```js
+async function invokeGetData() {
+  const tauri = window.__TAURI__;
+  if (tauri?.core?.invoke) return tauri.core.invoke('get_data');
+
+  const internals = window.__TAURI_INTERNALS__;
+  if (internals?.invoke) return internals.invoke('get_data');
+
+  // 最后兜底：Python 版 HTTP 后端
+  const resp = await fetch('/api/data', { cache: 'no-store' });
+  if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+  return await resp.json();
+}
+```
+
+### 反思
+
+这个坑很难在 `cargo build` 阶段发现——**编译永远成功**，问题只在运行时前端 JS 拿不到 invoke。Rust 侧和前端契约脱节。建议：
+
+- 前端 fetch/invoke 失败时**红色 toast 显式弹错**而不是静默走 fallback（现在只是圆点变红，不够醒目）
+- 或者启动时先 `invoke('ping')` 探活，失败直接页面级弹提示
+
+---
+
+## MSVC 环境不在 PATH 时 `cargo build` 失败
+
+### 症状
+
+新开 PowerShell 跑 `cargo build --release`：
+
+```
+cargo : 无法将"cargo"项识别为 cmdlet、函数、脚本文件或可运行程序的名称
+```
+
+或者 `cargo` 找到了，但报：
+
+```
+error: linker `link.exe` not found
+note: the msvc targets depend on the msvc linker
+```
+
+### 根因
+
+`rustup` 装完后 `cargo` 在 `%USERPROFILE%\.cargo\bin\`，`rustup-init` 会写到 **User 级 PATH**，但**已开着的终端不会自动继承新 PATH**。同理 VS Build Tools 的 `link.exe` 也在类似位置（默认 `C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\`，但如果自定义装到别处比如 `C:\BuildTools\` 就更需要主动激活）。
+
+### 处理
+
+**新开终端**（重新读取 PATH）通常就好了。如果还是不行，或者你想在**同一个已开的终端**里跑 cargo，用 cmd + `vcvars64.bat` 组合激活 MSVC 环境：
+
+```powershell
+# 假设 Build Tools 装在标准位置
+cmd /c 'call "C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && "%USERPROFILE%\.cargo\bin\cargo.exe" build --release'
+
+# 装在自定义位置比如 C:\BuildTools\ 就替换路径
+cmd /c 'call "C:\BuildTools\VC\Auxiliary\Build\vcvars64.bat" >nul && "%USERPROFILE%\.cargo\bin\cargo.exe" build --release'
+```
+
+`vcvars64.bat` 会把 MSVC 的 include / lib / link.exe 等注入到 cmd 会话，然后再调 cargo 用完整路径。用 `>nul` 抑制它的欢迎信息。
+
+---
+
+## 覆盖 `dist/*.exe` 报 "文件正由另一进程使用"
+
+### 症状
+
+```powershell
+Copy-Item ...\target\release\kiro-usage-dashboard.exe ...\dist\... -Force
+# Copy-Item: 文件"...\dist\kiro-usage-dashboard.exe"正由另一进程使用，因此该进程无法访问此文件。
+```
+
+### 根因
+
+你刚才运行的 exe 还开着窗口——Windows 独占锁住了文件。
+
+### 处理
+
+关掉那个正在运行的 dashboard 窗口再覆盖。或者写脚本时用 `try/catch`：
+
+```powershell
+try {
+    Copy-Item ...target\release\kiro-usage-dashboard.exe ...dist\... -Force -ErrorAction Stop
+    Write-Host "COPIED"
+} catch {
+    Write-Host "LOCKED (老 exe 还在运行, 请关闭后再运行)"
+}
+```

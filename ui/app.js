@@ -32,6 +32,10 @@ const state = {
   scanStats: null,
   lastFetchOk: 0,
 
+  // 导航
+  view: 'overview',       // overview / trends / tools / accounts / sessions
+  detailTab: 'v2',        // v2 / v1  (明细视图内的 tab)
+
   // UI 状态
   gran: 'day',            // hour / day / week / month
   range: '30d',           // today / week / month / 30d / all
@@ -216,11 +220,17 @@ function computeRange() {
 // （比如直接用浏览器打开 index.html 调试），回退到 HTTP fetch，
 // 这样 prototype-python 里的静态服务器也能复用同一份前端。
 async function invokeGetData() {
+  // Tauri v2 常规路径：需要 tauri.conf.json 里 app.withGlobalTauri: true
   const tauri = window.__TAURI__;
   if (tauri && tauri.core && typeof tauri.core.invoke === 'function') {
     return await tauri.core.invoke('get_data');
   }
-  // Fallback: Python 版的 HTTP 后端
+  // 兜底：Tauri v2 内部 API，即使 withGlobalTauri 没打开也可用
+  const internals = window.__TAURI_INTERNALS__;
+  if (internals && typeof internals.invoke === 'function') {
+    return await internals.invoke('get_data');
+  }
+  // 最后兜底：Python 版 HTTP 后端（浏览器里直接开 index.html 调试用）
   const resp = await fetch('/api/data', { cache: 'no-store' });
   if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
   return await resp.json();
@@ -410,10 +420,10 @@ function renderTrend(turns) {
     barMaxWidth: 32,
   }];
 
+  // 三个 y 轴不显示 name（原来的 credits/turns/h 会和顶部 legend、tick 挤成一坨），
+  // 用 legend + tooltip 传达维度即可。
   const yAxes = [{
     type: 'value',
-    name: 'credits',
-    nameTextStyle: { color: fgMute, fontSize: 11 },
     axisLine: { show: false },
     axisTick: { show: false },
     splitLine: { lineStyle: { color: border, opacity: 0.35, type: 'dashed' } },
@@ -434,8 +444,7 @@ function renderTrend(turns) {
       itemStyle: { color: '#22d3ee' },
     });
     yAxes.push({
-      type: 'value', name: 'turns', position: 'right',
-      nameTextStyle: { color: fgMute, fontSize: 11 },
+      type: 'value', position: 'right',
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
@@ -457,8 +466,7 @@ function renderTrend(turns) {
       itemStyle: { color: '#f59e0b' },
     });
     yAxes.push({
-      type: 'value', name: 'h', position: 'right', offset: 44,
-      nameTextStyle: { color: fgMute, fontSize: 11 },
+      type: 'value', position: 'right', offset: 44,
       axisLine: { show: false },
       axisTick: { show: false },
       splitLine: { show: false },
@@ -470,7 +478,8 @@ function renderTrend(turns) {
   const option = {
     animation: true,
     animationDuration: 400,
-    grid: { top: 40, right: 60 + (state.showElapsed ? 44 : 0), bottom: 40, left: 60 },
+    // grid.top 给 legend 留够空间；不显示 y 轴 name 后可以更紧凑
+    grid: { top: 48, right: 56 + (state.showElapsed ? 44 : 0), bottom: 40, left: 52 },
     tooltip: {
       trigger: 'axis',
       backgroundColor: css('--card') || '#12141c',
@@ -481,9 +490,10 @@ function renderTrend(turns) {
     },
     legend: {
       data: legendData,
-      textStyle: { color: fgDim, fontSize: 12 },
-      top: 4, right: 12,
+      textStyle: { color: css('--fg') || '#e5e7eb', fontSize: 12 },
+      top: 10, right: 16,
       icon: 'circle',
+      itemGap: 16,
     },
     xAxis: {
       type: 'category',
@@ -1240,32 +1250,196 @@ function initTheme() {
 }
 
 // ============================================================
+//  视图路由（Sidebar 导航）
+// ============================================================
+
+const VIEW_TITLES = {
+  overview: '总览',
+  trends: '趋势',
+  tools: '工具与工作区',
+  accounts: '账号历史',
+  sessions: '明细',
+};
+
+const VALID_VIEWS = new Set(Object.keys(VIEW_TITLES));
+
+// 切换到某个视图。会更新 DOM 类名、hash、标题，然后渲染该视图。
+function switchView(name, opts = {}) {
+  if (!VALID_VIEWS.has(name)) name = 'overview';
+  const changed = state.view !== name;
+  state.view = name;
+
+  // section 显示切换
+  document.querySelectorAll('.view').forEach(sec => {
+    sec.classList.toggle('active', sec.dataset.view === name);
+  });
+  // sidebar 高亮
+  document.querySelectorAll('.nav-item[data-view]').forEach(a => {
+    a.classList.toggle('active', a.dataset.view === name);
+  });
+  // 顶栏标题
+  const titleEl = document.getElementById('topbar-title');
+  if (titleEl) titleEl.textContent = VIEW_TITLES[name] || '';
+
+  // hash 同步（避免死循环 —— 只在真变了时写）
+  if (!opts.skipHash) {
+    const target = '#' + name;
+    if (location.hash !== target) location.hash = target;
+  }
+
+  // 渲染当前视图（DOM 可见后 chart 才能拿到尺寸）
+  render();
+
+  // 视图切换后，同一 chart 实例可能因为之前隐藏导致尺寸未知 —— 强制 resize
+  if (changed) {
+    setTimeout(() => {
+      Object.values(state.charts).forEach(c => c && c.resize());
+    }, 60);
+  }
+}
+
+// 初始化路由：读 hash + 绑定 nav 点击 + hashchange
+function initRouter() {
+  const initial = (location.hash || '').slice(1);
+  const start = VALID_VIEWS.has(initial) ? initial : 'overview';
+
+  document.querySelectorAll('.nav-item[data-view]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      switchView(a.dataset.view);
+    });
+  });
+  // "查看完整趋势 →" 之类的内部跳转
+  document.querySelectorAll('[data-view-link]').forEach(a => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      switchView(a.dataset.viewLink);
+    });
+  });
+  window.addEventListener('hashchange', () => {
+    const v = (location.hash || '').slice(1);
+    if (VALID_VIEWS.has(v) && v !== state.view) switchView(v, { skipHash: true });
+  });
+
+  switchView(start);
+}
+
+// 明细视图内 v2/v1 tab 切换
+function switchDetailTab(tab) {
+  if (tab !== 'v2' && tab !== 'v1') tab = 'v2';
+  state.detailTab = tab;
+  document.querySelectorAll('.tab-btn').forEach(b => {
+    b.classList.toggle('active', b.dataset.tab === tab);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('hidden', p.dataset.tabPanel !== tab);
+  });
+  // 切 tab 后可能有分页/搜索状态变化，重新渲染当前视图
+  if (state.view === 'sessions') render();
+}
+
+// ============================================================
 // 主渲染入口
 // ============================================================
 
+// 只渲染当前视图（每个视图各自独立初始化图表 / 表格）。
+// KPI 和 footer 是全局，任何视图下都刷新（数据便宜）。
 function render() {
   const rangeArr = filteredTurns();
 
-  // 特殊：dowHour 联动过滤（不是时间段过滤，独立处理）
-  let arrForDetail = rangeArr;
-  if (state.clickFilter && state.clickFilter.kind === 'dowHour') {
-    const { dow, hr } = state.clickFilter;
-    arrForDetail = rangeArr.filter(t => {
-      const d = toLocalDate(t.t);
-      return ((d.getUTCDay() || 7) - 1) === dow && d.getUTCHours() === hr;
-    });
-  }
-
+  // KPI 只在总览视图显示，但计算便宜。footer 是全局状态。
   renderKPI(rangeArr);
-  renderTrend(rangeArr);
-  renderHeatmap(rangeArr);
-  renderTools(rangeArr);
-  renderTopSessions(rangeArr);
-  renderWorkspace(rangeArr);
-  renderDetail(arrForDetail);
-  renderAccounts();
-  renderV1Sessions();
   updateFooter();
+
+  const view = state.view;
+
+  if (view === 'overview') {
+    renderTrendPreview(rangeArr);
+  } else if (view === 'trends') {
+    renderTrend(rangeArr);
+    renderHeatmap(rangeArr);
+  } else if (view === 'tools') {
+    renderTools(rangeArr);
+    renderWorkspace(rangeArr);
+    renderTopSessions(rangeArr);
+  } else if (view === 'accounts') {
+    renderAccounts();
+  } else if (view === 'sessions') {
+    // dowHour 联动过滤只影响 v2 明细表
+    let arrForDetail = rangeArr;
+    if (state.clickFilter && state.clickFilter.kind === 'dowHour') {
+      const { dow, hr } = state.clickFilter;
+      arrForDetail = rangeArr.filter(t => {
+        const d = toLocalDate(t.t);
+        return ((d.getUTCDay() || 7) - 1) === dow && d.getUTCHours() === hr;
+      });
+    }
+    refreshDetailFilters();
+    if (state.detailTab === 'v2') renderDetail(arrForDetail);
+    else renderV1Sessions();
+  }
+}
+
+// 总览视图的精简趋势图：按日聚合当前 range，只画 credits 一条柱，无叠加、无 dataZoom。
+function renderTrendPreview(turns) {
+  const range = computeRange();
+  const buckets = aggregateByGran(turns, 'day', range);
+  const xData = buckets.map(b => b.key.slice(5)); // 只显示 MM-DD
+  const credits = buckets.map(b => +b.credits.toFixed(2));
+
+  const accent = css('--accent') || '#8b5cf6';
+  const accent2 = css('--accent-2') || '#3b82f6';
+  const fgDim = css('--fg-dim') || '#a1a5b3';
+  const fgMute = css('--fg-mute') || '#6b7080';
+  const border = css('--border-strong') || '#2e3341';
+
+  const gradient = new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+    { offset: 0, color: accent },
+    { offset: 1, color: accent2 },
+  ]);
+
+  const option = {
+    animation: true,
+    animationDuration: 400,
+    grid: { top: 20, right: 20, bottom: 34, left: 50 },
+    tooltip: {
+      trigger: 'axis',
+      backgroundColor: css('--card') || '#12141c',
+      borderColor: border,
+      textStyle: { color: css('--fg') || '#e5e7eb' },
+      axisPointer: { type: 'shadow', shadowStyle: { color: 'rgba(139,92,246,0.08)' } },
+    },
+    xAxis: {
+      type: 'category',
+      data: xData,
+      axisLine: { lineStyle: { color: border } },
+      axisTick: { show: false },
+      axisLabel: { color: fgDim, fontSize: 11, hideOverlap: true },
+    },
+    yAxis: {
+      type: 'value',
+      nameTextStyle: { color: fgMute, fontSize: 11 },
+      axisLine: { show: false },
+      axisTick: { show: false },
+      splitLine: { lineStyle: { color: border, opacity: 0.3, type: 'dashed' } },
+      axisLabel: { color: fgDim, fontSize: 11 },
+    },
+    series: [{
+      name: 'Credits',
+      type: 'bar',
+      data: credits,
+      itemStyle: { color: gradient, borderRadius: [3, 3, 0, 0] },
+      emphasis: { itemStyle: { color: css('--bar-grad-hi') || '#a78bfa' } },
+      barMaxWidth: 24,
+    }],
+  };
+
+  const chart = chartOf(document.getElementById('chart-trend-preview'), 'trendPreview');
+  chart.setOption(option, true);
+
+  const rangeLabel = { today: '今日', week: '本周', month: '本月', '30d': '近 30 天', all: '全部' }[state.range];
+  const sub = document.getElementById('trend-preview-sub');
+  if (sub) sub.textContent = `按日 · ${rangeLabel} · ${buckets.length} 天`;
 }
 
 function updateFooter() {
@@ -1400,6 +1574,11 @@ function bindEvents() {
     });
   });
 
+  // 明细视图内 v2/v1 tab 切换
+  document.querySelectorAll('.tab-btn[data-tab]').forEach(b => {
+    b.addEventListener('click', () => switchDetailTab(b.dataset.tab));
+  });
+
   // 窗口 resize：所有 chart 调用 resize
   window.addEventListener('resize', () => {
     Object.values(state.charts).forEach(c => c && c.resize());
@@ -1429,8 +1608,8 @@ async function boot() {
   initTheme();
   bindEvents();
   await fetchData(false);
-  refreshDetailFilters();
-  render();
+  // initRouter 内部会调 switchView() → render()
+  initRouter();
   startAutoRefresh();
 }
 
