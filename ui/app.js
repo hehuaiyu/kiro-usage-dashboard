@@ -275,6 +275,9 @@ async function fetchData(silent = false) {
                     (state.scanStats && state.scanStats.reparsed > 0);
     if (changed) render();
     else updateFooter();
+
+    // v0.4.2: 首次数据到手, 隐藏启动遮罩
+    hideSplash();
   } catch (e) {
     console.error('[fetch]', e);
     setLiveStatus('error');
@@ -1817,9 +1820,23 @@ function loadEchartsAsync() {
   document.body.appendChild(s);
 }
 
+// v0.4.2: 隐藏启动遮罩 (淡出后 display:none)。幂等, 多次调用无害。
+let splashHidden = false;
+function hideSplash() {
+  if (splashHidden) return;
+  const el = document.getElementById('splash');
+  if (!el) return;
+  splashHidden = true;
+  el.classList.add('hiding');
+  setTimeout(() => el.classList.add('gone'), 500);
+}
+
 async function boot() {
   initTheme();
   bindEvents();
+
+  // 兜底: 即使数据一直没来 (后端出错), 也在 6 秒后强制撤掉遮罩, 别把用户永久卡在加载页
+  setTimeout(hideSplash, 6000);
 
   // 立即渲染骨架 + 数据 (不依赖 echarts; 图表函数检测到 echarts 未加载会自动跳过)
   initRouter();

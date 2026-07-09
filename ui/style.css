@@ -1324,3 +1324,67 @@ body {
   }
   .topbar-controls { width: 100%; }
 }
+
+/* ============================================================
+   v0.4.2: 启动遮罩 (splash) —— 盖住启动加载过程
+   ============================================================ */
+.splash {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  display: grid;
+  place-items: center;
+  /* 跟窗口 backgroundColor (#0E0F13) 一致, 无缝衔接 */
+  background: #0e0f13;
+  transition: opacity 0.45s ease;
+}
+/* 淡出 */
+.splash.hiding {
+  opacity: 0;
+  pointer-events: none;
+}
+/* 完全隐藏 (淡出结束后) */
+.splash.gone {
+  display: none;
+}
+
+.splash-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.splash-cat {
+  width: 72px;
+  height: 72px;
+  color: #e8eaf0;
+  animation: splashCatPulse 1.6s ease-in-out infinite;
+}
+@keyframes splashCatPulse {
+  0%, 100% { transform: scale(1); opacity: 0.9; }
+  50% { transform: scale(1.06); opacity: 1; }
+}
+.splash-title {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #e8eaf0;
+}
+/* 转圈 spinner */
+.splash-spinner {
+  width: 26px;
+  height: 26px;
+  border: 3px solid rgba(139, 92, 246, 0.25);
+  border-top-color: #8b5cf6;
+  border-radius: 50%;
+  animation: splashSpin 0.8s linear infinite;
+  margin-top: 4px;
+}
+@keyframes splashSpin {
+  to { transform: rotate(360deg); }
+}
+.splash-hint {
+  font-size: 12px;
+  color: #6b7080;
+  letter-spacing: 0.1em;
+}

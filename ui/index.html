@@ -13,6 +13,25 @@
 </head>
 <body>
 
+<!-- 启动遮罩：webview 一加载 HTML 就显示 (深色, 跟窗口背景无缝), 数据 ready 后淡出。
+     盖住"骨架/图表逐个冒出来"的过程, 让启动更像一个完整的加载动画。 -->
+<div id="splash" class="splash">
+  <div class="splash-inner">
+    <svg class="splash-cat" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M15 22 L12 5 L26 15 L38 15 L52 5 L49 22 A17 17 0 1 1 15 22 Z" fill="currentColor"/>
+      <ellipse cx="24" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+      <ellipse cx="40" cy="28" rx="2.6" ry="4.5" fill="#a78bfa"/>
+      <circle cx="23.3" cy="26" r="0.9" fill="#ffffff"/>
+      <circle cx="39.3" cy="26" r="0.9" fill="#ffffff"/>
+      <path d="M30 34 L34 34 L32 36.6 Z" fill="#8b5cf6"/>
+      <path d="M32 36.6 Q30 38.6 28 37.6 M32 36.6 Q34 38.6 36 37.6" stroke="currentColor" stroke-width="0.9" fill="none" opacity="0.55" stroke-linecap="round"/>
+    </svg>
+    <div class="splash-title">Kiro Usage</div>
+    <div class="splash-spinner"></div>
+    <div class="splash-hint">加载中…</div>
+  </div>
+</div>
+
 <div class="app-shell">
 
   <!-- ============ 左侧导航（v0.4: 窄图标模式 + 黑猫吉祥物） ============ -->
