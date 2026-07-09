@@ -15,7 +15,7 @@
 
 ### 修复
 
-- **Tauri v2 前端拿不到 invoke** —— `tauri.conf.json` 打开 `app.withGlobalTauri: true`，前端 `invokeGetData` 加 `__TAURI_INTERNALS__` 兜底路径。修复症状：exe 打开后 KPI 全 0、图表空白、状态圆点红、"服务时间 1970/1/1"。详见 [`troubleshooting.md` — Tauri v2 前端拿不到 window.__TAURI__](./troubleshooting.md#tauri-v2-前端拿不到-window__tauri__v02-关键坑)。
+- **Tauri v2 前端拿不到 invoke** —— `tauri.conf.json` 打开 `app.withGlobalTauri: true`，前端 `invokeGetData` 加 `__TAURI_INTERNALS__` 兜底路径。修复症状：exe 打开后 KPI 全 0、图表空白、状态圆点红、"服务时间 1970/1/1"。
 - **趋势图 legend 与 Y 轴刻度打架** —— 删掉图内 y 轴 name（`credits / turns / h`，本来面板标题已经说明），`grid.top` 从 40 加大到 48，legend 字色从 `--fg-dim` 改成 `--fg` 清晰。
 
 ### 变更
@@ -74,8 +74,6 @@
 - **文档**
   - `README.md` —— 项目总览、两版本对照、快速开始
   - `docs/data-sources.md` —— 完整 Kiro 数据源字段参考（含 base64 变体解码坑）
-  - `docs/design-rust-tauri.md` —— Rust 迁移架构设计
-  - `docs/troubleshooting.md` —— 代理/编码/编译踩坑
 - **图标**：`src-tauri/logo.png`（1024×1024 紫→蓝渐变 + K，placeholder）+ `icons/`（32×32 / 128×128 / @2x / icon.ico 多尺寸 / icon.png）
 - **License**：MIT
 

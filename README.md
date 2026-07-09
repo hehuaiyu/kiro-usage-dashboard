@@ -54,7 +54,11 @@ python kiro_dashboard.py --auto-port        # 端口占用时自动往上找
 
 ### 版本 B：Rust exe（需一次性搭环境，之后双击 exe）
 
-**前置**：装 Rust + Visual Studio Build Tools。步骤在 [`docs/troubleshooting.md#rust--tauri-开发环境构建-rust-版必需`](./docs/troubleshooting.md#rust--tauri-开发环境构建-rust-版必需)。
+**前置**：
+
+- 装 [Rust](https://rustup.rs)（`rustup-init.exe` 一键装）
+- 装 [Visual Studio Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/) 并勾选 **Desktop development with C++** workload（`link.exe` 必需，约 3-5 GB）
+- WebView2 Runtime（Win10/11 一般自带；缺失时从 [微软官网](https://developer.microsoft.com/microsoft-edge/webview2/) 装 Evergreen Runtime）
 
 **build + 运行**：
 
@@ -108,8 +112,7 @@ kiro-usage-dashboard/
 ├── .gitignore
 ├── docs/
 │   ├── data-sources.md            # 本地 Kiro 数据源位置和字段说明
-│   ├── design-rust-tauri.md       # Rust exe 版本的架构设计
-│   └── troubleshooting.md         # 常见问题（代理/编译/前端等）
+│   └── changelog.md               # 变更记录（版本时间线）
 ├── prototype-python/              # 版本 A：Python 原型
 │   ├── kiro_dashboard.py          # HTTP 服务器 + 数据扫描 (~966 行)
 │   ├── kiro_dashboard.cmd         # Windows 双击启动脚本
@@ -172,8 +175,6 @@ kiro-usage-dashboard/
 - **Python 原型** = 参考实现 + 快速改动。想加数据源、想改指标定义、想学习 Kiro 数据结构的人对着 Python 代码改一改立刻能看效果。数据源探索的 `docs/data-sources.md` 就是从这份原型摸出来的。
 
 - **Rust exe** = 生产分发。目标用户只想双击一个 exe 看到自己的用量数字，不用管 Python、不用装环境。
-
-架构 & 设计选型详见 [docs/design-rust-tauri.md](./docs/design-rust-tauri.md)。
 
 ## 常见问题
 

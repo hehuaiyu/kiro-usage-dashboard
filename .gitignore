@@ -74,3 +74,7 @@ temp/
 # 用户运行时导出的 CSV（含实际用量数据，避免误提交）
 kiro_usage_*.csv
 usage_export_*.csv
+
+# 私有 / 已过时文档：本地保留，不推公开仓库
+/docs/troubleshooting.md
+/docs/design-rust-tauri.md
