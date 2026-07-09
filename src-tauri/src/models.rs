@@ -125,7 +125,25 @@ pub struct ScanStats {
     pub took_ms: u64,
 }
 
-/// `get_data` IPC 命令的完整响应。JSON schema 与 Python 版 `/api/data` 一致。
+/// 本地持久化历史库的统计（用于前端 footer / sidebar 显示 "历史库: X 条 · 从 YYYY 起"）。
+///
+/// 定义在此以便 `DataResponse` 引用而不产生循环依赖（`history_store` 依赖 `models`）。
+#[derive(Serialize, Clone, Debug, Default)]
+pub struct HistoryStats {
+    pub turns_count: usize,
+    pub v1_sessions_count: usize,
+    pub quota_snapshots_count: usize,
+    /// 历史库中最早时间戳（三张表 ts_ms 的 min），UTC ms；空库为 None
+    pub earliest_ts: Option<i64>,
+    pub latest_ts: Option<i64>,
+    pub db_path: String,
+    pub db_size_bytes: u64,
+    /// 本次 get_data 调用中新增了多少条（三张表求和）
+    pub last_upserted: usize,
+}
+
+/// `get_data` IPC 命令的完整响应。JSON schema 与 Python 版 `/api/data` 一致，
+/// v0.3 新增 `history_stats` 字段（Python 版无此字段，前端做可选处理）。
 #[derive(Serialize, Debug)]
 pub struct DataResponse {
     pub turns: Vec<Turn>,
@@ -137,4 +155,6 @@ pub struct DataResponse {
     pub scan: ScanStats,
     pub scan_v1: ScanStats,
     pub scan_accounts: ScanStats,
+    /// 本地持久化历史库状态（v0.3+）
+    pub history_stats: HistoryStats,
 }

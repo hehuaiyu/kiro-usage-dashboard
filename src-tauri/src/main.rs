@@ -8,12 +8,14 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod history_store;
 mod models;
 mod quota_snapshot;
 mod scanner;
 mod util;
 
-use models::DataResponse;
+use history_store::HistoryStore;
+use models::{DataResponse, HistoryStats, QuotaSnapshot};
 use scanner::{QuotaHistoryCache, TurnCache, V1SessionCache};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -25,6 +27,16 @@ struct AppState {
     v1: Arc<V1SessionCache>,
     quota: Arc<QuotaHistoryCache>,
     state_db_path: PathBuf,
+    history: Arc<HistoryStore>,
+}
+
+/// 从当前扫描的 Account 列表里抽出所有 QuotaSnapshot。
+/// 用于把当前扫描的快照 upsert 到历史库。
+fn flatten_snapshots(accounts: &[models::Account]) -> Vec<QuotaSnapshot> {
+    accounts
+        .iter()
+        .flat_map(|a| a.snapshots.iter().cloned())
+        .collect()
 }
 
 // ---------------------------------------------------------------------------
@@ -32,16 +44,39 @@ struct AppState {
 // ---------------------------------------------------------------------------
 
 /// 前端主数据接口。等价于 Python 版的 `GET /api/data`。
+///
+/// v0.3 变更：
+///   1) 先扫当前 Kiro 数据
+///   2) upsert 到本地历史库（INSERT OR IGNORE，不覆盖）
+///   3) **从历史库读全量**作为返回值（Kiro 那边如果清理了，历史仍在）
+///   4) accounts 从历史库的原始 snapshots 重新聚合
 #[tauri::command]
 fn get_data(state: State<'_, AppState>) -> Result<DataResponse, String> {
-    let (turns, scan) = state.v2.scan();
-    let (v1_sessions, scan_v1) = state.v1.scan();
-    let (accounts, scan_accounts) = state.quota.scan();
+    // 1) 扫当前 Kiro 数据
+    let (curr_turns, scan) = state.v2.scan();
+    let (curr_v1, scan_v1) = state.v1.scan();
+    let (curr_accounts, scan_accounts) = state.quota.scan();
     let quota = quota_snapshot::load(&state.state_db_path);
 
+    // 2) upsert 到历史库
+    let ins_t = state.history.upsert_turns(&curr_turns).unwrap_or(0);
+    let ins_v = state.history.upsert_v1_sessions(&curr_v1).unwrap_or(0);
+    let curr_snaps = flatten_snapshots(&curr_accounts);
+    let ins_q = state.history.upsert_quota_snapshots(&curr_snaps).unwrap_or(0);
+
+    // 3) 从历史库读全量（Kiro 数据即便被清，这里仍能拿到累积历史）
+    let all_turns = state.history.load_all_turns().unwrap_or_default();
+    let all_v1 = state.history.load_all_v1_sessions().unwrap_or_default();
+    let all_snaps = state.history.load_all_quota_snapshots().unwrap_or_default();
+    let accounts = scanner::quota_history::aggregate_accounts_from_snapshots(all_snaps);
+
+    // 4) history stats
+    let mut history_stats = state.history.stats();
+    history_stats.last_upserted = ins_t + ins_v + ins_q;
+
     Ok(DataResponse {
-        turns,
-        v1_sessions,
+        turns: all_turns,
+        v1_sessions: all_v1,
         accounts,
         quota,
         server_ts: util::now_ms(),
@@ -49,13 +84,21 @@ fn get_data(state: State<'_, AppState>) -> Result<DataResponse, String> {
         scan,
         scan_v1,
         scan_accounts,
+        history_stats,
     })
 }
 
+/// 清空本地历史库。返回清除前的统计（供前端 toast "已清除 X 条"）。
+#[tauri::command]
+fn clear_history(state: State<'_, AppState>) -> Result<HistoryStats, String> {
+    state.history.clear_all()
+}
+
 /// 前端"导出 CSV"按钮走这个命令，直接拿字符串然后前端 Blob 触发下载。
+/// v0.3：从历史库读，包含累积的完整历史（不只是当前 Kiro 目录的数据）。
 #[tauri::command]
 fn export_csv(state: State<'_, AppState>) -> Result<String, String> {
-    let (turns, _) = state.v2.scan();
+    let turns = state.history.load_all_turns().unwrap_or_default();
     let tz_offset_min = util::local_tz_offset_min() as i64;
 
     let mut csv = String::new();
@@ -144,11 +187,18 @@ fn main() {
     let v1_root = util::default_v1_sessions_root();
     let logs_root = util::default_logs_root();
     let state_db_path = util::default_state_db();
+    let history_db_path = history_store::default_history_db();
 
-    // 启动时先做一次预热扫描，让首次 get_data 就是热的
+    // 3 个 Kiro 数据扫描器
     let v2 = Arc::new(TurnCache::new(sessions_root.clone()));
     let v1 = Arc::new(V1SessionCache::new(v1_root.clone()));
     let quota = Arc::new(QuotaHistoryCache::new(logs_root.clone()));
+
+    // 本地持久化历史库（打开失败直接 panic —— 没有持久化, 工具核心价值就没了）
+    let history = Arc::new(
+        HistoryStore::open(history_db_path.clone())
+            .unwrap_or_else(|e| panic!("[kiro-usage-dashboard] 历史库打开失败: {}", e)),
+    );
 
     // 打印诊断信息（release 模式看不到，dev 模式能看）
     eprintln!("[kiro-usage-dashboard] 数据源目录：");
@@ -156,11 +206,17 @@ fn main() {
     eprintln!("  v1 sessions:   {}", v1_root.display());
     eprintln!("  logs (quota):  {}", logs_root.display());
     eprintln!("  state.vscdb:   {}", state_db_path.display());
+    eprintln!("  history db:    {}", history_db_path.display());
 
-    // 预扫（可选，能让首次 IPC 响应快）
+    // 预扫 + 预 upsert：让首次 IPC 响应又快又已完成合并
     let (turns0, s0) = v2.scan();
     let (v1_0, s1) = v1.scan();
     let (accts0, sa) = quota.scan();
+    let snaps0 = flatten_snapshots(&accts0);
+    let ins_t = history.upsert_turns(&turns0).unwrap_or(0);
+    let ins_v = history.upsert_v1_sessions(&v1_0).unwrap_or(0);
+    let ins_q = history.upsert_quota_snapshots(&snaps0).unwrap_or(0);
+    let hstats = history.stats();
     eprintln!(
         "[kiro-usage-dashboard] 预热完成: v2 turn={} ({}ms), v1 session={} ({}ms), account={} ({}ms)",
         turns0.len(),
@@ -170,12 +226,23 @@ fn main() {
         accts0.len(),
         sa.took_ms,
     );
+    eprintln!(
+        "[history] upsert 新增: turn={} v1={} quota={} | 历史库累计: turn={} v1={} quota={} (db {:.1} KB)",
+        ins_t,
+        ins_v,
+        ins_q,
+        hstats.turns_count,
+        hstats.v1_sessions_count,
+        hstats.quota_snapshots_count,
+        hstats.db_size_bytes as f64 / 1024.0,
+    );
 
     let app_state = AppState {
         v2,
         v1,
         quota,
         state_db_path,
+        history,
     };
 
     tauri::Builder::default()
@@ -183,7 +250,7 @@ fn main() {
             app.manage(app_state);
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_data, export_csv])
+        .invoke_handler(tauri::generate_handler![get_data, export_csv, clear_history])
         .run(tauri::generate_context!())
         .expect("Tauri 启动失败");
 }

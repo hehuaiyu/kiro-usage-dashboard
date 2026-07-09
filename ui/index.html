@@ -67,8 +67,20 @@
     </nav>
 
     <div class="sidebar-footer">
-      <span class="version">v0.1.0</span>
-      <span class="build">Rust · Tauri v2</span>
+      <button class="btn-clear-history" id="btn-clear-history"
+              title="清空本地持久化历史库（不影响 Kiro 原始数据）">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="3 6 5 6 21 6"></polyline>
+          <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
+          <path d="M10 11v6"></path>
+          <path d="M14 11v6"></path>
+        </svg>
+        <span>清除历史库</span>
+      </button>
+      <div class="version-line">
+        <span class="version">v0.3.0</span>
+        <span class="build">Rust · Tauri v2</span>
+      </div>
     </div>
   </aside>
 
@@ -420,11 +432,13 @@
 
     <!-- 页脚 -->
     <footer class="footer">
+      <span id="footer-history" title="本地持久化历史库累计">-</span>
+      <span class="dot">·</span>
       <span id="footer-scan">-</span>
       <span class="dot">·</span>
       <span id="footer-server">-</span>
       <span class="dot">·</span>
-      <span>数据源: <code>~/.kiro/sessions/</code> + <code>state.vscdb</code></span>
+      <span>数据源: <code>~/.kiro/</code> + <code>state.vscdb</code></span>
     </footer>
 
   </main>

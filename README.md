@@ -13,6 +13,7 @@
 - **工具调用分布**：Treemap 看哪些工具（`execute_pwsh` / `read_files` / ...）吃掉的 credits 最多
 - **明细可搜可导 CSV**：每 turn 精确记录，方便二次分析
 - **实时刷新**：默认 15 秒静默拉数据，Kiro 那边跑完 turn 这边立刻显示
+- **本地持久化历史库** (v0.3+, Rust exe 独有)：启动时把当前 Kiro 数据 snapshot 到本地 SQLite，即便 Kiro 那边切账号/日志滚动/版本升级导致原始数据丢失，工具仍保留完整历史。用户可以随时"清除历史库"重置
 - **暗/亮双主题**：一键切换，样式跟 Vercel Analytics / Linear 风格靠齐
 - **零第三方依赖**：Python 版仅用 stdlib，只需 Python 3.9+
 - **数据本地**：默认只监听 `127.0.0.1`，不做任何外部通信（除 ECharts CDN 拉图表库）
@@ -112,6 +113,7 @@ kiro-usage-dashboard/
 ├── .gitignore
 ├── docs/
 │   ├── data-sources.md            # 本地 Kiro 数据源位置和字段说明
+│   ├── upgrade-guide.md           # Kiro 版本升级时的排查/适配指南
 │   └── changelog.md               # 变更记录（版本时间线）
 ├── prototype-python/              # 版本 A：Python 原型
 │   ├── kiro_dashboard.py          # HTTP 服务器 + 数据扫描 (~966 行)
@@ -127,14 +129,15 @@ kiro-usage-dashboard/
 │   ├── tauri.conf.json
 │   ├── build.rs
 │   └── src/
-│       ├── main.rs                # Tauri 入口 + IPC 命令 (get_data / export_csv)
+│       ├── main.rs                # Tauri 入口 + IPC 命令 (get_data / export_csv / clear_history)
 │       ├── models.rs              # DataResponse 等 struct
 │       ├── util.rs                # base64 变体解码 / 路径查找 / 时区
 │       ├── quota_snapshot.rs      # 读 state.vscdb (rusqlite)
+│       ├── history_store.rs       # v0.3+ 本地持久化 SQLite (turns / v1_sessions / quota_snapshots)
 │       └── scanner/
 │           ├── v2_turns.rs        # 扫 messages.jsonl 里的 usage_summary
 │           ├── v1_sessions.rs     # 扫 workspace-sessions 拿 v1 历史
-│           └── quota_history.rs   # 扫 logs 拿多账号 quota 时间序列
+│           └── quota_history.rs   # 扫 logs 拿多账号 quota 时间序列 + 独立聚合函数
 └── ui/                            # 前端（与 Python 版共用同一份，微调后 Tauri 复用）
     ├── index.html
     ├── style.css
@@ -161,12 +164,15 @@ kiro-usage-dashboard/
 
 本地能拿到的数据有限制，请知悉：
 
-- **估算累计**：只覆盖当前本地 sessions 归属账号——**Kiro 切换账号时旧账号的 sessions 数据会被覆盖**
-- **实际扣费历史**：Kiro 只保留最近约 10 次 IDE 启动的日志，**通常约 3-7 天**——更早的账单快照本地已丢失
-- **v1 sessions**：Kiro 旧数据格式的历史会话，**没有 credits 信息**（v1 时代 Kiro 还没引入 credits 追踪）——只能数 turn 数和会话数
-- **跨账号历史**：如果切换过账号，服务端 API 响应快照按 `userId` 分组能识别不同账号；但更早的、被日志清理机制删掉的账号数据拿不到
+- **首次运行工具之前的数据**：只能从 Kiro 当时还保留的原始文件里挖。Kiro 切账号会覆盖 v2 sessions、日志文件约 3-7 天滚动清理 —— 这些**首次运行前就已丢失的部分**工具救不回来
+- **v1 sessions**：Kiro 旧数据格式的历史会话，**没有 credits 信息**（v1 时代还没引入 credits 追踪）—— 只能数 turn 数和会话数
+- **服务器完整账单**：想看服务器视角的完整月度账单，只能登录对应账号到 Kiro / AWS Q Developer 后台查看
 
-想看更完整的账单历史（比如上个月），只能登录对应账号到 Kiro / AWS Q Developer 后台查看。
+**但是**（v0.3+ Rust exe 版）：**只要工具跑过至少一次，那次扫到的数据就永久落在本地 SQLite 历史库里**。之后 Kiro 那边即使清账号、滚日志、大版本迁移，工具仍能展示历史。所以：
+
+> **建议**：装完这个工具后，日常打开 Kiro 之前先启动一下 dashboard 让它 snapshot 当前数据。养成习惯后，Kiro 那边任何变化都不影响历史查看。
+
+清除历史库：sidebar 底部的"清除历史库"按钮（有二次确认）。
 
 ## 两个版本各自的价值
 

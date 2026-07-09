@@ -23,13 +23,14 @@ const PAGE_SIZE = 50;                // 明细表每页条数
 
 const state = {
   // 后端返回
-  turns: [],                    // v2 usage_summary，含 credits
+  turns: [],                    // v2 usage_summary，含 credits（v0.3+ 来自历史库合并）
   v1Sessions: [],               // v1 sessions 元数据（无 credits）
   accounts: [],                 // 多账号 quota 时间序列
   quota: null,
   serverTzOffsetMin: -new Date().getTimezoneOffset(),  // 兜底：用浏览器本地
   lastServerTs: 0,
   scanStats: null,
+  historyStats: null,           // v0.3+: 本地持久化历史库统计
   lastFetchOk: 0,
 
   // 导航
@@ -236,6 +237,19 @@ async function invokeGetData() {
   return await resp.json();
 }
 
+// v0.3+: 清除本地历史库。仅在 Tauri 环境下可用（Python 版没有持久化）。
+async function invokeClearHistory() {
+  const tauri = window.__TAURI__;
+  if (tauri && tauri.core && typeof tauri.core.invoke === 'function') {
+    return await tauri.core.invoke('clear_history');
+  }
+  const internals = window.__TAURI_INTERNALS__;
+  if (internals && typeof internals.invoke === 'function') {
+    return await internals.invoke('clear_history');
+  }
+  throw new Error('清除历史仅在 Tauri exe 环境下可用（Python 原型没有持久化历史库）。');
+}
+
 async function fetchData(silent = false) {
   try {
     const j = await invokeGetData();
@@ -249,6 +263,7 @@ async function fetchData(silent = false) {
     state.scanStats = j.scan || null;
     state.scanV1Stats = j.scan_v1 || null;
     state.scanAccountsStats = j.scan_accounts || null;
+    state.historyStats = j.history_stats || null;
     state.lastFetchOk = Date.now();
 
     setLiveStatus('live');
@@ -1448,12 +1463,25 @@ function updateFooter() {
   const sa = state.scanAccountsStats;
   const foot1 = document.getElementById('footer-scan');
   const parts = [];
-  if (s) parts.push(`v2: ${s.files} 文件/${s.turns} turn (${s.took_ms}ms)`);
+  if (s) parts.push(`v2: ${s.files} 文件 (${s.took_ms}ms)`);
   if (s1) parts.push(`v1: ${s1.files} sessions (${s1.took_ms}ms)`);
   if (sa) parts.push(`quota-log: ${sa.files} 文件/${state.accounts.length} 账号 (${sa.took_ms}ms)`);
   foot1.textContent = parts.join('  ·  ');
   document.getElementById('footer-server').textContent =
     `服务时间 ${new Date(state.lastServerTs).toLocaleString('zh-CN', { hour12: false })}`;
+
+  // v0.3+: 历史库状态
+  const hs = state.historyStats;
+  const foothist = document.getElementById('footer-history');
+  if (hs && foothist) {
+    const startDate = hs.earliest_ts ? fmtLocalDate(hs.earliest_ts) : null;
+    const nfmt = (n) => Number(n || 0).toLocaleString('zh-CN');
+    let text = `历史库: ${nfmt(hs.turns_count)} turn · ${nfmt(hs.v1_sessions_count)} v1 · ${nfmt(hs.quota_snapshots_count)} quota`;
+    if (startDate) text += `（起始 ${startDate}）`;
+    if (hs.last_upserted > 0) text += `  本次 +${hs.last_upserted}`;
+    foothist.textContent = text;
+    foothist.title = `历史库文件: ${hs.db_path}\n大小: ${(hs.db_size_bytes / 1024).toFixed(1)} KB`;
+  }
 }
 
 // ============================================================
@@ -1578,6 +1606,43 @@ function bindEvents() {
   document.querySelectorAll('.tab-btn[data-tab]').forEach(b => {
     b.addEventListener('click', () => switchDetailTab(b.dataset.tab));
   });
+
+  // v0.3+: 清除历史库按钮（二次确认）
+  const btnClear = document.getElementById('btn-clear-history');
+  if (btnClear) {
+    btnClear.addEventListener('click', async () => {
+      const hs = state.historyStats;
+      if (!hs) {
+        alert('历史库状态未加载完成，请稍后再试。');
+        return;
+      }
+      const total = (hs.turns_count || 0) + (hs.v1_sessions_count || 0) + (hs.quota_snapshots_count || 0);
+      if (total === 0) {
+        alert('历史库当前为空，无需清除。');
+        return;
+      }
+      const startDate = hs.earliest_ts ? fmtLocalDate(hs.earliest_ts) : '-';
+      const ok = confirm(
+        `确定要清除本地历史库吗？\n\n` +
+        `将删除累计以下记录（起始 ${startDate}）：\n` +
+        `  · ${hs.turns_count} 条 turn\n` +
+        `  · ${hs.v1_sessions_count} 条 v1 session\n` +
+        `  · ${hs.quota_snapshots_count} 条 quota 快照\n\n` +
+        `注意：Kiro 原始数据不受影响；但 Kiro 那边若已丢失过部分历史（切账号覆盖、日志过期），\n` +
+        `本地这些记录一旦清除将无法从 Kiro 重新恢复。\n\n` +
+        `确定继续？`
+      );
+      if (!ok) return;
+      try {
+        const before = await invokeClearHistory();
+        const cleared = (before.turns_count || 0) + (before.v1_sessions_count || 0) + (before.quota_snapshots_count || 0);
+        await fetchData(false);
+        alert(`已清除 ${cleared} 条历史记录。\n\n下次 Kiro 使用时工具会开始重新积累历史。`);
+      } catch (e) {
+        alert('清除失败: ' + (e?.message || e));
+      }
+    });
+  }
 
   // 窗口 resize：所有 chart 调用 resize
   window.addEventListener('resize', () => {

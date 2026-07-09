@@ -870,13 +870,52 @@ body {
 .nav-item.active svg { opacity: 1; }
 
 .sidebar-footer {
-  padding: 12px 14px 4px;
+  padding: 12px 4px 4px;
   color: var(--fg-mute);
   font-size: 11px;
   border-top: 1px solid var(--border);
   display: flex;
   flex-direction: column;
+  gap: 8px;
+}
+
+/* 清除历史库按钮：sidebar 底部醒目位置，危险色但不过分 */
+.btn-clear-history {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--fg-dim);
+  font-size: 12px;
+  cursor: pointer;
+  transition: color .15s, background .15s, border-color .15s;
+  width: 100%;
+  text-align: left;
+}
+.btn-clear-history svg {
+  flex-shrink: 0;
+  opacity: 0.8;
+}
+.btn-clear-history:hover {
+  color: #ef4444;
+  border-color: rgba(239, 68, 68, 0.5);
+  background: rgba(239, 68, 68, 0.08);
+}
+.btn-clear-history:hover svg {
+  opacity: 1;
+}
+.btn-clear-history:active {
+  transform: translateY(1px);
+}
+
+.sidebar-footer .version-line {
+  display: flex;
+  flex-direction: column;
   gap: 2px;
+  padding: 0 6px;
 }
 .sidebar-footer .version {
   font-weight: 600;

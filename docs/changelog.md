@@ -11,6 +11,35 @@
 
 ---
 
+## v0.3.0 — 本地持久化历史库 + Kiro 升级适配指南
+
+### 新增
+
+- **本地持久化历史库**（SQLite，位置见 `HistoryStats.db_path`，Windows 默认 `%APPDATA%\kiro-usage-dashboard\history.db`）
+  - 三张表：`turns` / `v1_sessions` / `quota_snapshots`，各自带主键做去重（`execution_id` / `workspace_full+session_id` / `uid+ts_secs`）
+  - 启动时把当前 Kiro 扫到的数据用 `INSERT OR IGNORE` upsert 到本地库
+  - Dashboard 展示的是历史库读全量后的结果 —— Kiro 数据被清除（切账号覆盖 / 日志滚动 3-7 天 / v1→v2 迁移）时，本地历史仍在
+  - 未来 Kiro 升级导致 scanner 失效时，历史库里的老记录依然能正常展示
+- **新 IPC 命令 `clear_history`** —— 清空三张表 + VACUUM，返回清除前的统计。前端 sidebar 底部"清除历史库"按钮触发，有二次确认对话框（列出即将删除的条数、起始日期，明确后果）
+- **新文档 `docs/upgrade-guide.md`** —— Kiro 版本升级适配指南：失效症状对照表 / 诊断三步 / 改动位点速查表 / 验证流程 / 升级前 snapshot
+- 页脚新增历史库状态："历史库: X turn · Y v1 · Z quota（起始 YYYY-MM-DD）本次 +N"，鼠标悬停显示 db 文件路径和大小
+
+### 变更
+
+- `DataResponse` 新增 `history_stats` 字段（`HistoryStats` struct）
+- `get_data` 流程改为「扫当前 → upsert 到历史 → 从历史读全量 → 用 `aggregate_accounts_from_snapshots` 聚合 accounts」
+- `scanner/quota_history.rs` 里 snapshot→Account 聚合逻辑独立成 `pub fn aggregate_accounts_from_snapshots`（history_store 从 SQLite 读快照后复用同一份聚合逻辑，保证一致性）
+- `export_csv` 改为从历史库读，导出的是**累积完整历史**（含 Kiro 已清但本地保留的记录）
+- Footer 显示修 bug：`v2: X 文件/undefined turn` 中 `undefined` 来自不存在的 `s.turns` 字段，改成 `v2: X 文件 (Y ms)`
+
+### 构建
+
+- 新依赖模块 `history_store.rs`（约 350 行）
+- rusqlite 已有依赖 (v0.32 with `bundled` feature)，零新增外部依赖
+- Release exe 从 5.03 MB 增至 5.08 MB (+45 KB)
+
+---
+
 ## v0.2.0 — UI 重构 + 关键 Bug 修复
 
 ### 修复

@@ -124,79 +124,7 @@ impl QuotaHistoryCache {
         inner.cache.retain(|k, _| active.contains(k));
         drop(inner); // 释放锁，后续处理不再需要
 
-        // 按时间排序 + 用"最近见过的 uid"填补空 uid
-        all_snaps.sort_by_key(|s| s.t);
-        let mut last_uid: Option<String> = None;
-        for s in all_snaps.iter_mut() {
-            if let Some(uid) = &s.uid {
-                last_uid = Some(uid.clone());
-            } else if let Some(u) = &last_uid {
-                s.uid = Some(u.clone());
-            }
-        }
-
-        // 按 uid 分组
-        let mut by_uid: HashMap<String, Vec<QuotaSnapshot>> = HashMap::new();
-        for s in all_snaps {
-            let uid = s.uid.clone().unwrap_or_else(|| "(unknown)".to_string());
-            by_uid.entry(uid).or_default().push(s);
-        }
-
-        // 组装 Account 列表
-        let mut accounts: Vec<Account> = Vec::new();
-        for (uid, mut snaps) in by_uid {
-            snaps.sort_by_key(|s| s.t);
-
-            // 同秒同值去重
-            let mut dedup: Vec<QuotaSnapshot> = Vec::new();
-            let mut last_key: Option<(i64, i64, i64)> = None;
-            for s in snaps {
-                let key = (s.t / 1000, (s.current * 100.0).round() as i64, s.limit);
-                if last_key.as_ref() != Some(&key) {
-                    dedup.push(s);
-                    last_key = Some(key);
-                }
-            }
-            if dedup.is_empty() {
-                continue;
-            }
-
-            // 归零/重置次数：断崖式下跌（current < prev*0.7 且降幅 > 30）
-            let mut resets = 0u32;
-            let mut prev: Option<&QuotaSnapshot> = None;
-            for s in &dedup {
-                if let Some(p) = prev {
-                    if s.current < p.current - 30.0 && s.current < p.current * 0.7 {
-                        resets += 1;
-                    }
-                }
-                prev = Some(s);
-            }
-
-            let first_seen = dedup.first().map(|s| s.t).unwrap_or(0);
-            let last_seen = dedup.last().map(|s| s.t).unwrap_or(0);
-            let peak = dedup.iter().map(|s| s.current).fold(0.0f64, f64::max);
-            let latest = dedup.last().map(|s| s.current).unwrap_or(0.0);
-            let latest_limit = dedup.last().map(|s| s.limit).unwrap_or(0);
-
-            accounts.push(Account {
-                uid,
-                first_seen,
-                last_seen,
-                peak,
-                latest,
-                latest_limit,
-                resets,
-                snapshots: dedup,
-            });
-        }
-
-        // 峰值降序
-        accounts.sort_by(|a, b| {
-            b.peak
-                .partial_cmp(&a.peak)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
+        let accounts = aggregate_accounts_from_snapshots(all_snaps);
 
         let stats = ScanStats {
             files: files_seen,
@@ -281,4 +209,96 @@ impl QuotaHistoryCache {
 
         snaps
     }
+}
+
+/// 把原始 quota snapshots 聚合成 Account 列表。
+///
+/// 步骤：
+///   1) 按时间排序
+///   2) 用"最近见过的 uid"填补空 uid（同一次 IDE 启动中，quota 响应通常带 uid，
+///      随后同批次可能被截断但归属同一账号）
+///   3) 按 uid 分组，每组按 (秒级时间戳, 值×100取整, limit) 去重
+///   4) 统计断崖式下跌 (`resets`)、peak、latest 等
+///   5) 按 peak 降序返回
+///
+/// 独立成 pub 函数是为了 history_store 从 SQLite 读出快照后能复用同一份聚合逻辑，
+/// 保证 "扫当前 Kiro" 和 "读本地历史库" 给出的 Account[] 结构完全一致。
+pub fn aggregate_accounts_from_snapshots(mut all_snaps: Vec<QuotaSnapshot>) -> Vec<Account> {
+    // 1) 按时间排序
+    all_snaps.sort_by_key(|s| s.t);
+
+    // 2) 填补空 uid
+    let mut last_uid: Option<String> = None;
+    for s in all_snaps.iter_mut() {
+        if let Some(uid) = &s.uid {
+            last_uid = Some(uid.clone());
+        } else if let Some(u) = &last_uid {
+            s.uid = Some(u.clone());
+        }
+    }
+
+    // 3) 按 uid 分组
+    let mut by_uid: HashMap<String, Vec<QuotaSnapshot>> = HashMap::new();
+    for s in all_snaps {
+        let uid = s.uid.clone().unwrap_or_else(|| "(unknown)".to_string());
+        by_uid.entry(uid).or_default().push(s);
+    }
+
+    // 4) 组装 Account
+    let mut accounts: Vec<Account> = Vec::new();
+    for (uid, mut snaps) in by_uid {
+        snaps.sort_by_key(|s| s.t);
+
+        // 同秒同值去重
+        let mut dedup: Vec<QuotaSnapshot> = Vec::new();
+        let mut last_key: Option<(i64, i64, i64)> = None;
+        for s in snaps {
+            let key = (s.t / 1000, (s.current * 100.0).round() as i64, s.limit);
+            if last_key.as_ref() != Some(&key) {
+                dedup.push(s);
+                last_key = Some(key);
+            }
+        }
+        if dedup.is_empty() {
+            continue;
+        }
+
+        // 归零/重置次数：断崖式下跌（current < prev*0.7 且降幅 > 30）
+        let mut resets = 0u32;
+        let mut prev: Option<&QuotaSnapshot> = None;
+        for s in &dedup {
+            if let Some(p) = prev {
+                if s.current < p.current - 30.0 && s.current < p.current * 0.7 {
+                    resets += 1;
+                }
+            }
+            prev = Some(s);
+        }
+
+        let first_seen = dedup.first().map(|s| s.t).unwrap_or(0);
+        let last_seen = dedup.last().map(|s| s.t).unwrap_or(0);
+        let peak = dedup.iter().map(|s| s.current).fold(0.0f64, f64::max);
+        let latest = dedup.last().map(|s| s.current).unwrap_or(0.0);
+        let latest_limit = dedup.last().map(|s| s.limit).unwrap_or(0);
+
+        accounts.push(Account {
+            uid,
+            first_seen,
+            last_seen,
+            peak,
+            latest,
+            latest_limit,
+            resets,
+            snapshots: dedup,
+        });
+    }
+
+    // 5) 按 peak 降序
+    accounts.sort_by(|a, b| {
+        b.peak
+            .partial_cmp(&a.peak)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+
+    accounts
 }
