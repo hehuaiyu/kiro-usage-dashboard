@@ -90,6 +90,14 @@ fn fmt_duration(ms: i64) -> String {
     }
 }
 
+fn fmt_local_dt(ts_ms: i64) -> String {
+    use chrono::{Local, TimeZone};
+    match Local.timestamp_millis_opt(ts_ms).single() {
+        Some(d) => d.format("%Y-%m-%d %H:%M").to_string(),
+        None => "-".into(),
+    }
+}
+
 /// 按本地日期聚合 credits, 返回最近 N 天的 (MM-DD, credits)
 fn aggregate_daily(turns: &[Turn], max_days: usize) -> Vec<(String, f64)> {
     use chrono::{Local, TimeZone};
@@ -161,6 +169,26 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let bars_model = Rc::new(slint::VecModel::from(bars));
     app.set_bars(bars_model.into());
+
+    // 明细表: 全量 turns, 最近的在前 (ListView 虚拟滚动, 436 行无压力)
+    let mut detail: Vec<DetailRow> = data
+        .turns
+        .iter()
+        .rev()
+        .map(|t| DetailRow {
+            time: fmt_local_dt(t.t).into(),
+            credits: fmt_credits(t.c).into(),
+            elapsed: fmt_duration(t.e).into(),
+            status: t.s.clone().into(),
+            workspace: t.ws.clone().into(),
+            title: t.title.clone().into(),
+        })
+        .collect();
+    detail.shrink_to_fit();
+    let detail_count = detail.len();
+    let detail_model = Rc::new(slint::VecModel::from(detail));
+    app.set_detail_rows(detail_model.into());
+    app.set_detail_sub(format!("{} 条 turn (最近在前)", detail_count).into());
 
     diag(&format!(
         "数据已绑定, 即将 run, 累计 {}ms",
