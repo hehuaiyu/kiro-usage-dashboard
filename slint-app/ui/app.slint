@@ -1,77 +1,212 @@
-import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+import { VerticalBox, HorizontalBox, ScrollView } from "std-widgets.slint";
 
-// 单张 KPI 卡片
+// 一条按日柱状数据
+export struct BarItem {
+    label: string,   // MM-DD
+    value: string,   // 显示值
+    ratio: float,    // 0.0 ~ 1.0 柱高比例
+}
+
+// 全局主题 —— 干净中性深灰黑 (参考 Timo), 集中管理便于调整
+global Theme {
+    out property <color> bg: #16181c;          // 窗口最深, 中性深灰黑 (不发棕)
+    out property <color> panel: #1b1e23;       // 侧栏 / 面板
+    out property <color> card: #22262c;        // 卡片 (比 panel 浅, 靠细边框区分)
+    out property <color> card-hover: #2b2f37;
+    out property <color> border: #30343c;
+    out property <color> fg: #e6e8ec;          // 近白
+    out property <color> fg-dim: #9aa0a8;
+    out property <color> fg-mute: #686e77;
+    out property <color> accent: #8b5cf6;       // 紫 (主色, 柱子也用它: 纯色饱满不塑料)
+    out property <color> accent-soft: #a78bfa;
+}
+
+// --------- KPI 卡片 ---------
 component KpiCard inherits Rectangle {
+    in property <string> icon;
     in property <string> label;
     in property <string> value;
     in property <string> hint;
-    background: #1a1d24;
-    border-radius: 12px;
+    background: Theme.card;
+    border-radius: 14px;
     border-width: 1px;
-    border-color: #2e3341;
-    min-width: 180px;
+    border-color: Theme.border;
+    min-width: 170px;
+    vertical-stretch: 0;
     VerticalLayout {
         padding: 16px;
         spacing: 4px;
-        Text { text: root.label; color: #8b909e; font-size: 12px; }
-        Text { text: root.value; color: #b4a0fa; font-size: 30px; font-weight: 700; }
-        Text { text: root.hint; color: #6b7080; font-size: 11px; }
+        HorizontalLayout {
+            spacing: 8px;
+            Text { text: root.icon; font-size: 16px; }
+            Text { text: root.label; color: Theme.fg-dim; font-size: 12px; vertical-alignment: center; }
+        }
+        Text { text: root.value; color: Theme.fg; font-size: 30px; font-weight: 700; }
+        Text { text: root.hint; color: Theme.fg-mute; font-size: 11px; }
+    }
+}
+
+// --------- 左侧导航项 ---------
+component NavItem inherits Rectangle {
+    in property <string> text;
+    in property <bool> active;
+    callback clicked;
+    height: 42px;
+    border-radius: 10px;
+    background: root.active ? Theme.accent : transparent;
+    ta := TouchArea { clicked => { root.clicked(); } }
+    states [
+        hover when ta.has-hover && !root.active : { background: Theme.card-hover; }
+    ]
+    Text {
+        text: root.text;
+        color: root.active ? white : Theme.fg-dim;
+        font-size: 13px;
+        font-weight: root.active ? 600 : 400;
+        horizontal-alignment: center;
+        vertical-alignment: center;
     }
 }
 
 export component AppWindow inherits Window {
-    in property <string> credits: "-";
-    in property <string> turns: "-";
-    in property <string> elapsed: "-";
-    in property <string> days: "-";
+    // KPI
+    in property <string> kpi-credits: "-";
+    in property <string> kpi-turns: "-";
+    in property <string> kpi-elapsed: "-";
+    in property <string> kpi-sessions: "-";
+    in property <string> kpi-turns-hint: "";
+    in property <string> kpi-sessions-hint: "";
+    // 柱状图
+    in property <[BarItem]> bars;
+    in property <string> chart-sub: "";
+    // 底部
     in property <string> footer: "";
+    // 当前视图: 0=简约, 1=明细(占位)
+    property <int> active-view: 0;
 
-    title: "Kiro Usage Dashboard (Slint test build)";
-    preferred-width: 1000px;
-    preferred-height: 640px;
-    background: #0e0f13;
+    title: "Kiro Usage Dashboard (Slint)";
+    preferred-width: 1100px;
+    preferred-height: 720px;
+    background: Theme.bg;
 
-    VerticalBox {
-        padding: 24px;
-        spacing: 18px;
-
-        Text {
-            text: "Kiro Usage  -  Slint test build (software renderer)";
-            color: white;
-            font-size: 22px;
-            font-weight: 700;
-        }
-
-        HorizontalBox {
-            spacing: 16px;
-            KpiCard { label: "Est Credits"; value: root.credits; hint: "history.db total"; }
-            KpiCard { label: "Turns"; value: root.turns; hint: "all turns"; }
-            KpiCard { label: "Elapsed"; value: root.elapsed; hint: "sum"; }
-            KpiCard { label: "Active Days"; value: root.days; hint: "days with data"; }
-        }
-
+    HorizontalLayout {
+        // ===== 左侧导航 =====
         Rectangle {
-            background: #12141c;
-            border-radius: 12px;
-            border-width: 1px;
-            border-color: #2e3341;
+            width: 150px;
+            background: Theme.panel;
             VerticalLayout {
-                padding: 20px;
-                Text {
-                    text: "如果你能看到这个窗口, 说明 Slint 软件渲染在无 GPU 机器上可以工作。";
-                    color: #a1a5b3;
-                    font-size: 14px;
-                    wrap: word-wrap;
+                padding: 14px;
+                spacing: 6px;
+                // 品牌
+                HorizontalLayout {
+                    spacing: 8px;
+                    height: 44px;
+                    Text { text: "🐱"; font-size: 24px; vertical-alignment: center; }
+                    VerticalLayout {
+                        alignment: center;
+                        Text { text: "Kiro Usage"; color: Theme.fg; font-size: 14px; font-weight: 700; }
+                        Text { text: "Slint"; color: Theme.fg-mute; font-size: 10px; }
+                    }
                 }
-                Text {
-                    text: root.footer;
-                    color: #6b7080;
-                    font-size: 12px;
+                Rectangle { height: 8px; }
+                NavItem {
+                    text: "简约";
+                    active: root.active-view == 0;
+                    clicked => { root.active-view = 0; }
                 }
+                NavItem {
+                    text: "明细";
+                    active: root.active-view == 1;
+                    clicked => { root.active-view = 1; }
+                }
+                Rectangle {}  // 撑满
+                Text { text: root.footer; color: Theme.fg-mute; font-size: 9px; wrap: word-wrap; }
             }
         }
 
-        // 占位撑满
-        Rectangle {}
+        // ===== 右侧内容 =====
+        Rectangle {
+            background: Theme.bg;
+            VerticalLayout {
+                padding: 24px;
+                spacing: 18px;
+
+                // 标题
+                Text {
+                    text: root.active-view == 0 ? "简约" : "明细";
+                    color: Theme.fg;
+                    font-size: 22px;
+                    font-weight: 700;
+                }
+
+                // ---- 简约视图 ----
+                if root.active-view == 0 : VerticalLayout {
+                    spacing: 18px;
+                    // KPI 行
+                    HorizontalLayout {
+                        spacing: 16px;
+                        KpiCard { icon: "💰"; label: "估算累计"; value: root.kpi-credits; hint: "Est. Credits"; }
+                        KpiCard { icon: "💬"; label: "Turn 数"; value: root.kpi-turns; hint: root.kpi-turns-hint; }
+                        KpiCard { icon: "⏱"; label: "累计耗时"; value: root.kpi-elapsed; hint: "所有 turn"; }
+                        KpiCard { icon: "📁"; label: "Session"; value: root.kpi-sessions; hint: root.kpi-sessions-hint; }
+                    }
+                    // 柱状图
+                    Rectangle {
+                        background: Theme.panel;
+                        border-radius: 14px;
+                        border-width: 1px;
+                        border-color: Theme.border;
+                        VerticalLayout {
+                            padding: 20px;
+                            spacing: 12px;
+                            HorizontalLayout {
+                                Text { text: "按日 credits"; color: Theme.fg; font-size: 14px; font-weight: 600; }
+                                Rectangle {}
+                                Text { text: root.chart-sub; color: Theme.fg-mute; font-size: 11px; vertical-alignment: center; }
+                            }
+                            // 柱子区
+                            HorizontalLayout {
+                                alignment: space-around;
+                                min-height: 200px;
+                                for bar in root.bars : VerticalLayout {
+                                    alignment: end;
+                                    spacing: 4px;
+                                    Rectangle {
+                                        width: 20px;
+                                        height: max(2px, bar.ratio * 170px);
+                                        background: Theme.accent;
+                                        border-radius: 5px;
+                                    }
+                                    Text {
+                                        text: bar.label;
+                                        color: Theme.fg-mute;
+                                        font-size: 11px;
+                                        horizontal-alignment: center;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    Rectangle {}  // 撑满
+                }
+
+                // ---- 明细视图 (占位, 下一步做表格) ----
+                if root.active-view == 1 : Rectangle {
+                    background: Theme.panel;
+                    border-radius: 14px;
+                    border-width: 1px;
+                    border-color: Theme.border;
+                    VerticalLayout {
+                        alignment: center;
+                        Text {
+                            text: "明细表格 (下一步实现)";
+                            color: Theme.fg-mute;
+                            font-size: 14px;
+                            horizontal-alignment: center;
+                        }
+                    }
+                }
+            }
+        }
     }
 }

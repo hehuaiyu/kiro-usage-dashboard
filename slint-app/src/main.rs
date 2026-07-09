@@ -1,43 +1,33 @@
-// Kiro Usage Dashboard —— Slint 试验版
+// Kiro Usage Dashboard —— Slint 版
 //
-// 目的: 验证 Slint 的纯 Rust CPU 软件渲染器 (renderer-software) 能否在
-// 这台图形栈残缺的无 GPU 机器上跑起来 —— egui (glow/wgpu) 在此机全崩,
-// 而 Slint 软件渲染不碰系统图形栈, 理论上能绕开。
+// 纯 Rust CPU 软件渲染 (renderer-software), 在无 GPU 机器上也能秒开。
+// 数据层复用 kiro-core (跟 Tauri 版同一套扫描/持久化/聚合)。
 //
-// 第一版最小验证: 读 history.db 显示 4 个 KPI, 先用英文标签避免中文字体坑
-// 干扰"能否跑"的判断。
+// 当前进度 (增量): 左侧导航 + 简约视图 (KPI + 按日柱状图)。明细/趋势/账号视图逐步加。
 
 slint::include_modules!();
 
+use kiro_core::history_store::{default_history_db, HistoryStore};
+use kiro_core::models::Turn;
+use kiro_core::scanner::{QuotaHistoryCache, TurnCache, V1SessionCache};
+use kiro_core::util;
+use std::rc::Rc;
+
 fn diag(msg: &str) {
-    use std::io::Write;
-    eprintln!("[slint {}] {}", chrono::Local::now().format("%H:%M:%S%.3f"), msg);
-    if let Some(dir) = dirs::data_dir().map(|d| d.join("kiro-usage-dashboard")) {
-        let _ = std::fs::create_dir_all(&dir);
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(dir.join("slint-startup.log"))
-        {
-            let _ = writeln!(
-                f,
-                "[{}] {}",
-                chrono::Local::now().format("%H:%M:%S%.3f"),
-                msg
-            );
-        }
-    }
+    eprintln!(
+        "[slint {}] {}",
+        chrono::Local::now().format("%H:%M:%S%.3f"),
+        msg
+    );
 }
 
-/// 用 kiro-core 完整流程加载数据: 扫 Kiro 原始数据 → upsert 到历史库 → 读全量。
-/// 跟 Tauri 版 get_data 一致, 所以 Slint 版也是完整实时数据 (不只是读旧 db)。
-/// 返回 KPI: (credits 和, turn 数, 耗时 ms 和, 活跃天数)
-fn load_kpi() -> (f64, usize, i64, usize) {
-    use kiro_core::history_store::{default_history_db, HistoryStore};
-    use kiro_core::scanner::{QuotaHistoryCache, TurnCache, V1SessionCache};
-    use kiro_core::util;
+/// 完整数据 (跟 Tauri get_data 一致): 扫 3 源 → upsert 历史库 → 读全量。
+struct LoadedData {
+    turns: Vec<Turn>,
+    v1_count: usize,
+}
 
-    // 1) 扫当前 Kiro 数据 (3 个数据源)
+fn load_data() -> LoadedData {
     let v2 = TurnCache::new(util::default_sessions_root());
     let v1 = V1SessionCache::new(util::default_v1_sessions_root());
     let qc = QuotaHistoryCache::new(util::default_logs_root());
@@ -51,7 +41,7 @@ fn load_kpi() -> (f64, usize, i64, usize) {
         accts.len()
     ));
 
-    // 2) upsert 到历史库, 再读全量 (Kiro 数据被清也不丢历史)
+    let v1_count = v1s.len();
     let all_turns = match HistoryStore::open(default_history_db()) {
         Ok(history) => {
             let _ = history.upsert_turns(&turns);
@@ -64,17 +54,14 @@ fn load_kpi() -> (f64, usize, i64, usize) {
             history.load_all_turns().unwrap_or(turns)
         }
         Err(e) => {
-            diag(&format!("历史库打开失败, 用当前扫描结果兜底: {}", e));
+            diag(&format!("历史库打开失败, 用当前扫描兜底: {}", e));
             turns
         }
     };
-
-    // 3) 算 KPI
-    let credits: f64 = all_turns.iter().map(|t| t.c).sum();
-    let elapsed: i64 = all_turns.iter().map(|t| t.e).sum();
-    let days: std::collections::BTreeSet<i64> =
-        all_turns.iter().map(|t| t.t / 86_400_000).collect();
-    (credits, all_turns.len(), elapsed, days.len())
+    LoadedData {
+        turns: all_turns,
+        v1_count,
+    }
 }
 
 fn fmt_credits(c: f64) -> String {
@@ -103,49 +90,81 @@ fn fmt_duration(ms: i64) -> String {
     }
 }
 
+/// 按本地日期聚合 credits, 返回最近 N 天的 (MM-DD, credits)
+fn aggregate_daily(turns: &[Turn], max_days: usize) -> Vec<(String, f64)> {
+    use chrono::{Local, TimeZone};
+    use std::collections::BTreeMap;
+    let mut map: BTreeMap<String, f64> = BTreeMap::new();
+    for t in turns {
+        if let Some(d) = Local.timestamp_millis_opt(t.t).single() {
+            *map.entry(d.format("%Y-%m-%d").to_string()).or_insert(0.0) += t.c;
+        }
+    }
+    let mut v: Vec<(String, f64)> = map.into_iter().collect();
+    if v.len() > max_days {
+        v = v.split_off(v.len() - max_days);
+    }
+    // 标签只留 MM-DD
+    v.into_iter()
+        .map(|(k, c)| (k[5..].to_string(), c))
+        .collect()
+}
+
 fn main() -> Result<(), slint::PlatformError> {
     let t0 = std::time::Instant::now();
     diag("slint main() 启动");
 
-    let (credits, turns, elapsed, days) = load_kpi();
-    diag(&format!(
-        "数据加载完成: credits={:.2} turns={} days={}",
-        credits, turns, days
-    ));
+    let data = load_data();
 
-    diag("即将 AppWindow::new (Slint 软件渲染初始化)");
+    // KPI
+    let total_credits: f64 = data.turns.iter().map(|t| t.c).sum();
+    let total_elapsed: i64 = data.turns.iter().map(|t| t.e).sum();
+    let priced = data.turns.iter().filter(|t| t.c > 0.0).count();
+    // v2 session 按 agent_session_id 去重
+    let v2_sessions: std::collections::BTreeSet<&str> =
+        data.turns.iter().map(|t| t.aid.as_str()).collect();
+    let total_sessions = data.v1_count + v2_sessions.len();
+
+    // 柱状图: 最近 30 天
+    let daily = aggregate_daily(&data.turns, 30);
+    let max_v = daily.iter().map(|(_, c)| *c).fold(0.0_f64, f64::max).max(0.0001);
+    let bars: Vec<BarItem> = daily
+        .iter()
+        .map(|(label, c)| BarItem {
+            label: label.clone().into(),
+            value: fmt_credits(*c).into(),
+            ratio: (*c / max_v) as f32,
+        })
+        .collect();
+
     let app = AppWindow::new()?;
     diag(&format!(
         "AppWindow::new 完成, 从 main 累计 {}ms",
         t0.elapsed().as_millis()
     ));
 
-    app.set_credits(fmt_credits(credits).into());
-    app.set_turns(turns.to_string().into());
-    app.set_elapsed(fmt_duration(elapsed).into());
-    app.set_days(days.to_string().into());
+    app.set_kpi_credits(fmt_credits(total_credits).into());
+    app.set_kpi_turns(data.turns.len().to_string().into());
+    app.set_kpi_turns_hint(format!("含计费 {}", priced).into());
+    app.set_kpi_elapsed(fmt_duration(total_elapsed).into());
+    app.set_kpi_sessions(total_sessions.to_string().into());
+    app.set_kpi_sessions_hint(format!("v1 {} · v2 {}", data.v1_count, v2_sessions.len()).into());
+    app.set_chart_sub(format!("近 {} 天", daily.len()).into());
     app.set_footer(
         format!(
-            "启动到窗口创建: {}ms  |  数据源: %APPDATA%\\kiro-usage-dashboard\\history.db",
-            t0.elapsed().as_millis()
+            "启动 {}ms · {} turns · 数据源 kiro-core",
+            t0.elapsed().as_millis(),
+            data.turns.len()
         )
         .into(),
     );
 
-    // 首帧计时: 用 Timer 在第一次事件循环迭代后记录 (近似首帧)
-    let t0_clone = t0;
-    let timer = slint::Timer::default();
-    timer.start(
-        slint::TimerMode::SingleShot,
-        std::time::Duration::from_millis(0),
-        move || {
-            diag(&format!(
-                "首个事件循环回调 (窗口应已显示), 从 main 累计 {}ms",
-                t0_clone.elapsed().as_millis()
-            ));
-        },
-    );
+    let bars_model = Rc::new(slint::VecModel::from(bars));
+    app.set_bars(bars_model.into());
 
-    diag("即将 app.run (进入事件循环)");
+    diag(&format!(
+        "数据已绑定, 即将 run, 累计 {}ms",
+        t0.elapsed().as_millis()
+    ));
     app.run()
 }
