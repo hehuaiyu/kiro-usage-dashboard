@@ -8,7 +8,8 @@ description = "Kiro Usage Dashboard - Slint 试验版 (纯 Rust CPU 软件渲染
 # 关键: default-features=false 关掉默认的 femtovg(OpenGL) 渲染, 改用纯软件渲染
 # renderer-software 是 Slint 自带的纯 Rust CPU 光栅化器 (本为无 GPU 嵌入式设计)
 slint = { version = "1", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-2"] }
-rusqlite = { version = "0.32", features = ["bundled"] }
+# 共享后端数据层 (扫描/持久化/聚合), 跟 Tauri 版复用同一套逻辑
+kiro-core = { path = "../kiro-core" }
 dirs = "5"
 chrono = "0.4"
 

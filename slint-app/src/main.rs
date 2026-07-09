@@ -29,42 +29,52 @@ fn diag(msg: &str) {
     }
 }
 
-/// 读 history.db 算 KPI: (credits 和, turn 数, 耗时 ms 和, 活跃天数)
+/// 用 kiro-core 完整流程加载数据: 扫 Kiro 原始数据 → upsert 到历史库 → 读全量。
+/// 跟 Tauri 版 get_data 一致, 所以 Slint 版也是完整实时数据 (不只是读旧 db)。
+/// 返回 KPI: (credits 和, turn 数, 耗时 ms 和, 活跃天数)
 fn load_kpi() -> (f64, usize, i64, usize) {
-    let Some(path) = dirs::data_dir().map(|d| d.join("kiro-usage-dashboard").join("history.db"))
-    else {
-        return (0.0, 0, 0, 0);
-    };
-    let conn = match rusqlite::Connection::open_with_flags(
-        &path,
-        rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
-    ) {
-        Ok(c) => c,
+    use kiro_core::history_store::{default_history_db, HistoryStore};
+    use kiro_core::scanner::{QuotaHistoryCache, TurnCache, V1SessionCache};
+    use kiro_core::util;
+
+    // 1) 扫当前 Kiro 数据 (3 个数据源)
+    let v2 = TurnCache::new(util::default_sessions_root());
+    let v1 = V1SessionCache::new(util::default_v1_sessions_root());
+    let qc = QuotaHistoryCache::new(util::default_logs_root());
+    let (turns, _) = v2.scan();
+    let (v1s, _) = v1.scan();
+    let (accts, _) = qc.scan();
+    diag(&format!(
+        "扫描完成: {} turns, {} v1, {} accounts",
+        turns.len(),
+        v1s.len(),
+        accts.len()
+    ));
+
+    // 2) upsert 到历史库, 再读全量 (Kiro 数据被清也不丢历史)
+    let all_turns = match HistoryStore::open(default_history_db()) {
+        Ok(history) => {
+            let _ = history.upsert_turns(&turns);
+            let _ = history.upsert_v1_sessions(&v1s);
+            let snaps: Vec<_> = accts
+                .iter()
+                .flat_map(|a| a.snapshots.iter().cloned())
+                .collect();
+            let _ = history.upsert_quota_snapshots(&snaps);
+            history.load_all_turns().unwrap_or(turns)
+        }
         Err(e) => {
-            diag(&format!("打开 history.db 失败: {}", e));
-            return (0.0, 0, 0, 0);
+            diag(&format!("历史库打开失败, 用当前扫描结果兜底: {}", e));
+            turns
         }
     };
-    let mut credits = 0.0;
-    let mut turns = 0usize;
-    let mut elapsed = 0i64;
-    let mut days = std::collections::BTreeSet::new();
-    if let Ok(mut stmt) = conn.prepare("SELECT ts_ms, credits, elapsed_ms FROM turns") {
-        let rows = stmt.query_map([], |r| {
-            Ok((r.get::<_, i64>(0)?, r.get::<_, f64>(1)?, r.get::<_, i64>(2)?))
-        });
-        if let Ok(rows) = rows {
-            for row in rows.flatten() {
-                let (ts, c, e) = row;
-                credits += c;
-                turns += 1;
-                elapsed += e;
-                // 按天 (UTC 简化) 去重
-                days.insert(ts / 86_400_000);
-            }
-        }
-    }
-    (credits, turns, elapsed, days.len())
+
+    // 3) 算 KPI
+    let credits: f64 = all_turns.iter().map(|t| t.c).sum();
+    let elapsed: i64 = all_turns.iter().map(|t| t.e).sum();
+    let days: std::collections::BTreeSet<i64> =
+        all_turns.iter().map(|t| t.t / 86_400_000).collect();
+    (credits, all_turns.len(), elapsed, days.len())
 }
 
 fn fmt_credits(c: f64) -> String {
