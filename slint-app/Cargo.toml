@@ -1,0 +1,21 @@
+[package]
+name = "kiro-usage-slint"
+version = "0.1.0"
+edition = "2021"
+description = "Kiro Usage Dashboard - Slint 试验版 (纯 Rust CPU 软件渲染, 无 GPU 依赖)"
+
+[dependencies]
+# 关键: default-features=false 关掉默认的 femtovg(OpenGL) 渲染, 改用纯软件渲染
+# renderer-software 是 Slint 自带的纯 Rust CPU 光栅化器 (本为无 GPU 嵌入式设计)
+slint = { version = "1", default-features = false, features = ["backend-winit", "renderer-software", "compat-1-2"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+dirs = "5"
+chrono = "0.4"
+
+[build-dependencies]
+slint-build = "1"
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1

@@ -1,0 +1,77 @@
+import { VerticalBox, HorizontalBox } from "std-widgets.slint";
+
+// 单张 KPI 卡片
+component KpiCard inherits Rectangle {
+    in property <string> label;
+    in property <string> value;
+    in property <string> hint;
+    background: #1a1d24;
+    border-radius: 12px;
+    border-width: 1px;
+    border-color: #2e3341;
+    min-width: 180px;
+    VerticalLayout {
+        padding: 16px;
+        spacing: 4px;
+        Text { text: root.label; color: #8b909e; font-size: 12px; }
+        Text { text: root.value; color: #b4a0fa; font-size: 30px; font-weight: 700; }
+        Text { text: root.hint; color: #6b7080; font-size: 11px; }
+    }
+}
+
+export component AppWindow inherits Window {
+    in property <string> credits: "-";
+    in property <string> turns: "-";
+    in property <string> elapsed: "-";
+    in property <string> days: "-";
+    in property <string> footer: "";
+
+    title: "Kiro Usage Dashboard (Slint test build)";
+    preferred-width: 1000px;
+    preferred-height: 640px;
+    background: #0e0f13;
+
+    VerticalBox {
+        padding: 24px;
+        spacing: 18px;
+
+        Text {
+            text: "Kiro Usage  -  Slint test build (software renderer)";
+            color: white;
+            font-size: 22px;
+            font-weight: 700;
+        }
+
+        HorizontalBox {
+            spacing: 16px;
+            KpiCard { label: "Est Credits"; value: root.credits; hint: "history.db total"; }
+            KpiCard { label: "Turns"; value: root.turns; hint: "all turns"; }
+            KpiCard { label: "Elapsed"; value: root.elapsed; hint: "sum"; }
+            KpiCard { label: "Active Days"; value: root.days; hint: "days with data"; }
+        }
+
+        Rectangle {
+            background: #12141c;
+            border-radius: 12px;
+            border-width: 1px;
+            border-color: #2e3341;
+            VerticalLayout {
+                padding: 20px;
+                Text {
+                    text: "如果你能看到这个窗口, 说明 Slint 软件渲染在无 GPU 机器上可以工作。";
+                    color: #a1a5b3;
+                    font-size: 14px;
+                    wrap: word-wrap;
+                }
+                Text {
+                    text: root.footer;
+                    color: #6b7080;
+                    font-size: 12px;
+                }
+            }
+        }
+
+        // 占位撑满
+        Rectangle {}
+    }
+}
