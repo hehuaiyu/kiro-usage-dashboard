@@ -105,6 +105,128 @@ fn fmt_local_dt(ts_ms: i64) -> String {
     }
 }
 
+/// 时间范围 (0今日 1本周 2本月 3近30天 4全部) → 起始 UTC 毫秒
+fn range_start_ms(range: i32) -> i64 {
+    use chrono::{Datelike, Duration, Local, Timelike};
+    let now = Local::now();
+    let start = match range {
+        0 => now
+            .date_naive()
+            .and_hms_opt(0, 0, 0)
+            .map(|d| d.and_local_timezone(Local).unwrap()),
+        1 => {
+            // 本周一 0 点
+            let days_from_mon = now.weekday().num_days_from_monday() as i64;
+            (now - Duration::days(days_from_mon))
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .map(|d| d.and_local_timezone(Local).unwrap())
+        }
+        2 => now
+            .date_naive()
+            .with_day(1)
+            .and_then(|d| d.and_hms_opt(0, 0, 0))
+            .map(|d| d.and_local_timezone(Local).unwrap()),
+        3 => Some(now - Duration::days(30)),
+        _ => return 0, // 全部
+    };
+    start.map(|d| d.timestamp_millis()).unwrap_or(0)
+}
+
+fn range_label(range: i32) -> &'static str {
+    match range {
+        0 => "今日",
+        1 => "本周",
+        2 => "本月",
+        3 => "近 30 天",
+        _ => "全部",
+    }
+}
+
+/// 按时间范围过滤数据并重算 KPI / 柱状图 / 热力图 / 明细, set 回 UI。
+/// 账号视图是跨时间历史, 不在此函数 (在 main 一次性设置)。
+fn refresh(app: &AppWindow, all: &[Turn], v1_count: usize, range: i32) {
+    use chrono::{Datelike, Local, TimeZone, Timelike};
+    use std::collections::BTreeSet;
+
+    let start = range_start_ms(range);
+    let turns: Vec<Turn> = all.iter().filter(|t| t.t >= start).cloned().collect();
+
+    // KPI
+    let total_credits: f64 = turns.iter().map(|t| t.c).sum();
+    let total_elapsed: i64 = turns.iter().map(|t| t.e).sum();
+    let priced = turns.iter().filter(|t| t.c > 0.0).count();
+    let v2_sessions: BTreeSet<&str> = turns.iter().map(|t| t.aid.as_str()).collect();
+    let total_sessions = v1_count + v2_sessions.len();
+
+    app.set_kpi_credits(fmt_credits(total_credits).into());
+    app.set_kpi_turns(turns.len().to_string().into());
+    app.set_kpi_turns_hint(format!("含计费 {}", priced).into());
+    app.set_kpi_elapsed(fmt_duration(total_elapsed).into());
+    app.set_kpi_sessions(total_sessions.to_string().into());
+    app.set_kpi_sessions_hint(format!("v1 {} · v2 {}", v1_count, v2_sessions.len()).into());
+
+    // 柱状图 (按日, 最近 30 天桶)
+    let daily = aggregate_daily(&turns, 30);
+    let max_v = daily
+        .iter()
+        .map(|(_, c)| *c)
+        .fold(0.0_f64, f64::max)
+        .max(0.0001);
+    let bars: Vec<BarItem> = daily
+        .iter()
+        .map(|(label, c)| BarItem {
+            label: label.clone().into(),
+            value: fmt_credits(*c).into(),
+            ratio: (*c / max_v) as f32,
+        })
+        .collect();
+    app.set_bars(Rc::new(slint::VecModel::from(bars)).into());
+    app.set_chart_sub(format!("{} · {} 天", range_label(range), daily.len()).into());
+
+    // 热力图 7×24
+    let mut heat = [[0.0_f64; 24]; 7];
+    for t in &turns {
+        if let Some(d) = Local.timestamp_millis_opt(t.t).single() {
+            heat[d.weekday().num_days_from_monday() as usize][d.hour() as usize] += t.c;
+        }
+    }
+    let hmax = heat
+        .iter()
+        .flat_map(|r| r.iter())
+        .cloned()
+        .fold(0.0_f64, f64::max)
+        .max(0.0001);
+    let heat_rows: Vec<slint::ModelRc<HeatCell>> = (0..7)
+        .map(|d| {
+            let cells: Vec<HeatCell> = (0..24)
+                .map(|h| HeatCell {
+                    ratio: (heat[d][h] / hmax) as f32,
+                })
+                .collect();
+            slint::ModelRc::new(slint::VecModel::from(cells))
+        })
+        .collect();
+    app.set_heat(slint::ModelRc::new(slint::VecModel::from(heat_rows)));
+
+    // 明细表 (按范围, 最近在前)
+    let detail: Vec<DetailRow> = turns
+        .iter()
+        .rev()
+        .map(|t| DetailRow {
+            time: fmt_local_dt(t.t).into(),
+            credits: fmt_credits(t.c).into(),
+            elapsed: fmt_duration(t.e).into(),
+            status: t.s.clone().into(),
+            workspace: t.ws.clone().into(),
+            title: t.title.clone().into(),
+        })
+        .collect();
+    let detail_count = detail.len();
+    app.set_detail_rows(Rc::new(slint::VecModel::from(detail)).into());
+    app.set_detail_sub(format!("{} · {} 条 turn", range_label(range), detail_count).into());
+}
+
 /// 按本地日期聚合 credits, 返回最近 N 天的 (MM-DD, credits)
 fn aggregate_daily(turns: &[Turn], max_days: usize) -> Vec<(String, f64)> {
     use chrono::{Local, TimeZone};
@@ -131,103 +253,23 @@ fn main() -> Result<(), slint::PlatformError> {
 
     let data = load_data();
 
-    // KPI
-    let total_credits: f64 = data.turns.iter().map(|t| t.c).sum();
-    let total_elapsed: i64 = data.turns.iter().map(|t| t.e).sum();
-    let priced = data.turns.iter().filter(|t| t.c > 0.0).count();
-    // v2 session 按 agent_session_id 去重
-    let v2_sessions: std::collections::BTreeSet<&str> =
-        data.turns.iter().map(|t| t.aid.as_str()).collect();
-    let total_sessions = data.v1_count + v2_sessions.len();
-
-    // 柱状图: 最近 30 天
-    let daily = aggregate_daily(&data.turns, 30);
-    let max_v = daily.iter().map(|(_, c)| *c).fold(0.0_f64, f64::max).max(0.0001);
-    let bars: Vec<BarItem> = daily
-        .iter()
-        .map(|(label, c)| BarItem {
-            label: label.clone().into(),
-            value: fmt_credits(*c).into(),
-            ratio: (*c / max_v) as f32,
-        })
-        .collect();
-
     let app = AppWindow::new()?;
     diag(&format!(
         "AppWindow::new 完成, 从 main 累计 {}ms",
         t0.elapsed().as_millis()
     ));
 
-    app.set_kpi_credits(fmt_credits(total_credits).into());
-    app.set_kpi_turns(data.turns.len().to_string().into());
-    app.set_kpi_turns_hint(format!("含计费 {}", priced).into());
-    app.set_kpi_elapsed(fmt_duration(total_elapsed).into());
-    app.set_kpi_sessions(total_sessions.to_string().into());
-    app.set_kpi_sessions_hint(format!("v1 {} · v2 {}", data.v1_count, v2_sessions.len()).into());
-    app.set_chart_sub(format!("近 {} 天", daily.len()).into());
+    // 页脚 (一次性)
     app.set_footer(
         format!(
-            "启动 {}ms · {} turns · 数据源 kiro-core",
+            "启动 {}ms · 全量 {} turns · 数据源 kiro-core",
             t0.elapsed().as_millis(),
             data.turns.len()
         )
         .into(),
     );
 
-    let bars_model = Rc::new(slint::VecModel::from(bars));
-    app.set_bars(bars_model.into());
-
-    // 明细表: 全量 turns, 最近的在前 (ListView 虚拟滚动, 436 行无压力)
-    let mut detail: Vec<DetailRow> = data
-        .turns
-        .iter()
-        .rev()
-        .map(|t| DetailRow {
-            time: fmt_local_dt(t.t).into(),
-            credits: fmt_credits(t.c).into(),
-            elapsed: fmt_duration(t.e).into(),
-            status: t.s.clone().into(),
-            workspace: t.ws.clone().into(),
-            title: t.title.clone().into(),
-        })
-        .collect();
-    detail.shrink_to_fit();
-    let detail_count = detail.len();
-    let detail_model = Rc::new(slint::VecModel::from(detail));
-    app.set_detail_rows(detail_model.into());
-    app.set_detail_sub(format!("{} 条 turn (最近在前)", detail_count).into());
-
-    // 热力图: 7 (周一~周日) × 24 (小时) 的 credits 网格
-    {
-        use chrono::{Datelike, Local, TimeZone, Timelike};
-        let mut heat = [[0.0_f64; 24]; 7];
-        for t in &data.turns {
-            if let Some(d) = Local.timestamp_millis_opt(t.t).single() {
-                let wd = d.weekday().num_days_from_monday() as usize; // 0=周一
-                let h = d.hour() as usize;
-                heat[wd][h] += t.c;
-            }
-        }
-        let hmax = heat
-            .iter()
-            .flat_map(|r| r.iter())
-            .cloned()
-            .fold(0.0_f64, f64::max)
-            .max(0.0001);
-        let heat_rows: Vec<slint::ModelRc<HeatCell>> = (0..7)
-            .map(|d| {
-                let cells: Vec<HeatCell> = (0..24)
-                    .map(|h| HeatCell {
-                        ratio: (heat[d][h] / hmax) as f32,
-                    })
-                    .collect();
-                slint::ModelRc::new(slint::VecModel::from(cells))
-            })
-            .collect();
-        app.set_heat(slint::ModelRc::new(slint::VecModel::from(heat_rows)));
-    }
-
-    // 账号历史
+    // 账号历史 (跨时间的历史, 不随时间范围变, 一次性设置)
     let acct_rows: Vec<AccountRow> = data
         .accounts
         .iter()
@@ -247,6 +289,22 @@ fn main() -> Result<(), slint::PlatformError> {
     let acct_count = acct_rows.len();
     app.set_account_rows(Rc::new(slint::VecModel::from(acct_rows)).into());
     app.set_account_sub(format!("{} 个账号 (每次归零 = 切账号/配额重置)", acct_count).into());
+
+    // 交互: 时间范围切换 → refresh 重算 KPI/柱状/热力/明细
+    let turns = Rc::new(data.turns);
+    let v1_count = data.v1_count;
+    {
+        let turns = turns.clone();
+        let weak = app.as_weak();
+        app.on_range_changed(move |r| {
+            if let Some(app) = weak.upgrade() {
+                app.set_active_range(r);
+                refresh(&app, &turns, v1_count, r);
+            }
+        });
+    }
+    // 初始渲染 (默认 30 天)
+    refresh(&app, &turns, v1_count, 3);
 
     diag(&format!(
         "数据已绑定, 即将 run, 累计 {}ms",
