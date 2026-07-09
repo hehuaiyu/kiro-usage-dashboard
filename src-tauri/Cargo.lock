@@ -1653,7 +1653,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "kiro-usage-dashboard"
+name = "kiro-core"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
@@ -1665,9 +1665,20 @@ dependencies = [
  "rusqlite",
  "serde",
  "serde_json",
+ "walkdir",
+]
+
+[[package]]
+name = "kiro-usage-dashboard"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "dirs 5.0.1",
+ "kiro-core",
+ "serde",
+ "serde_json",
  "tauri",
  "tauri-build",
- "walkdir",
 ]
 
 [[package]]

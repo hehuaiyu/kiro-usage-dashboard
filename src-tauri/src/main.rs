@@ -8,11 +8,9 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod history_store;
-mod models;
-mod quota_snapshot;
-mod scanner;
-mod util;
+// 后端数据层已抽到 kiro-core 共享 lib（供 Tauri 版和 Slint 版复用）。
+// 用 use 引入模块名, 下面函数里 models::/scanner::/util::/quota_snapshot::/history_store:: 引用照常。
+use kiro_core::{history_store, models, quota_snapshot, scanner, util};
 
 use history_store::HistoryStore;
 use models::{DataResponse, HistoryStats, QuotaSnapshot};

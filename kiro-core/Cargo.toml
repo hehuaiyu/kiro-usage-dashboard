@@ -1,0 +1,18 @@
+[package]
+name = "kiro-core"
+version = "0.1.0"
+edition = "2021"
+description = "Kiro 用量数据层 (扫描/持久化/聚合), UI 无关, 供 Tauri 版与 Slint 版共享"
+license = "MIT"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde", "std"] }
+regex = "1"
+once_cell = "1"
+rusqlite = { version = "0.32", features = ["bundled"] }
+walkdir = "2"
+base64 = "0.22"
+dirs = "5"
+parking_lot = "0.12"
