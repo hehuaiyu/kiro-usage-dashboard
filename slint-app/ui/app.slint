@@ -31,17 +31,18 @@ export struct AccountRow {
     resets: string,
 }
 
-// 全局主题 —— 干净中性深灰黑 (参考 Timo), 集中管理便于调整
+// 全局主题 —— 暗色: 中性深灰黑 (Timo 风); 亮色: 暖灰米 (护眼)。dark 属性切换。
 global Theme {
-    out property <color> bg: #16181c;          // 窗口最深, 中性深灰黑 (不发棕)
-    out property <color> panel: #1b1e23;       // 侧栏 / 面板
-    out property <color> card: #22262c;        // 卡片 (比 panel 浅, 靠细边框区分)
-    out property <color> card-hover: #2b2f37;
-    out property <color> border: #30343c;
-    out property <color> fg: #e6e8ec;          // 近白
-    out property <color> fg-dim: #9aa0a8;
-    out property <color> fg-mute: #686e77;
-    out property <color> accent: #8b5cf6;       // 紫 (主色, 柱子也用它: 纯色饱满不塑料)
+    in-out property <bool> dark: true;
+    out property <color> bg: dark ? #16181c : #dcd9d2;
+    out property <color> panel: dark ? #1b1e23 : #e8e5de;
+    out property <color> card: dark ? #22262c : #f2efe9;
+    out property <color> card-hover: dark ? #2b2f37 : #e2ded6;
+    out property <color> border: dark ? #30343c : #c9c5bb;
+    out property <color> fg: dark ? #e6e8ec : #2c2a26;
+    out property <color> fg-dim: dark ? #9aa0a8 : #5c5951;
+    out property <color> fg-mute: dark ? #686e77 : #8b877d;
+    out property <color> accent: #8b5cf6;       // 紫 (主色, 柱子也用它)
     out property <color> accent-soft: #a78bfa;
 }
 
@@ -201,8 +202,9 @@ export component AppWindow inherits Window {
                 padding: 24px;
                 spacing: 18px;
 
-                // 顶栏: 标题 + 时间范围切换
+                // 顶栏: 标题 + 时间范围切换 + 主题切换
                 HorizontalLayout {
+                    spacing: 10px;
                     Text {
                         text: root.active-view == 0 ? "简约"
                             : root.active-view == 1 ? "明细"
@@ -222,6 +224,23 @@ export component AppWindow inherits Window {
                         SegButton { text: "本月"; active: root.active-range == 2; clicked => { root.range-changed(2); } }
                         SegButton { text: "30 天"; active: root.active-range == 3; clicked => { root.range-changed(3); } }
                         SegButton { text: "全部"; active: root.active-range == 4; clicked => { root.range-changed(4); } }
+                    }
+                    // 主题切换 (所有视图显示)
+                    Rectangle {
+                        width: 34px;
+                        height: 30px;
+                        border-radius: 8px;
+                        background: Theme.card;
+                        theme-ta := TouchArea { clicked => { Theme.dark = !Theme.dark; } }
+                        states [
+                            hover when theme-ta.has-hover : { background: Theme.card-hover; }
+                        ]
+                        Text {
+                            text: Theme.dark ? "☀" : "🌙";
+                            font-size: 15px;
+                            horizontal-alignment: center;
+                            vertical-alignment: center;
+                        }
                     }
                 }
 
